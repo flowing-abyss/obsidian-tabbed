@@ -310,7 +310,68 @@ describe('moveBetweenBlocks', () => {
     expect(to.locate()?.range.from).toStrictEqual({ line: 6, ch: 0 });
   });
 
-  it('sorts edits by range even when the source block follows the target', () => {
+  it('moves a virtual source tab effective defaults atomically into an explicit target', () => {
+    const virtualBlock = ['```tabs', '```'].join('\n');
+    const editor = new RealisticEditor(`start\n${virtualBlock}\nbetween\n${secondBlock}\nend`);
+    const from = locatorAt(editor, virtualBlock);
+    const to = locatorAt(editor, secondBlock);
+    const transaction = vi.spyOn(editor, 'transaction');
+
+    const result = moveBetweenBlocks(from, to, 0, 1);
+
+    const wantedTo = ['~~~tabs', 'tab: X', 'target', 'tab: New tab', 'New tab content', '~~~'].join(
+      '\n',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      throw new Error(`Expected success, received ${result.reason}`);
+    }
+    expect(editor.getValue()).toBe(`start\n${virtualBlock}\nbetween\n${wantedTo}\nend`);
+    expect(transaction).toHaveBeenCalledExactlyOnceWith(
+      {
+        changes: [
+          expect.objectContaining({ from: { line: 4, ch: 0 }, text: wantedTo }),
+          expect.objectContaining({ from: { line: 1, ch: 0 }, text: virtualBlock }),
+        ],
+      },
+      'tabbed',
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      from: {
+        snapshot: virtualBlock,
+        range: { from: { line: 1, ch: 0 }, to: { line: 2, ch: 3 } },
+        block: {
+          document: {
+            tabs: [
+              {
+                kind: 'virtual',
+                reason: 'empty',
+                title: 'New tab',
+                content: 'New tab content',
+              },
+            ],
+          },
+        },
+      },
+      to: {
+        snapshot: wantedTo,
+        range: { from: { line: 4, ch: 0 }, to: { line: 9, ch: 3 } },
+        block: {
+          document: {
+            tabs: [
+              { kind: 'explicit', title: 'X', content: 'target\n' },
+              { kind: 'explicit', title: 'New tab', content: 'New tab content\n' },
+            ],
+          },
+        },
+      },
+    });
+    expect(from.locate()).toMatchObject({ snapshot: virtualBlock, block: result.from.block });
+    expect(to.locate()).toMatchObject({ snapshot: wantedTo, block: result.to.block });
+  });
+
+  it('keeps reverse-order ranges, anchors, and repeated mutations aligned after both deltas', () => {
     const editor = new RealisticEditor(`${secondBlock}\nbetween\n${firstBlock}`);
     const to = locatorAt(editor, secondBlock);
     const from = locatorAt(editor, firstBlock);
@@ -318,24 +379,70 @@ describe('moveBetweenBlocks', () => {
 
     const result = moveBetweenBlocks(from, to, 1, 0);
 
+    const wantedTo = ['~~~tabs', 'tab: B', 'beta', 'tab: X', 'target', '~~~'].join('\n');
+    const wantedFrom = ['```tabs', 'tab: A', 'alpha', '```'].join('\n');
     expect(result.ok).toBe(true);
+    if (!result.ok) {
+      throw new Error(`Expected success, received ${result.reason}`);
+    }
     const changes = transaction.mock.calls[0]?.[0].changes;
     expect(changes?.map((change) => change.from.line)).toStrictEqual([5, 0]);
-    expect(editor.getValue()).toBe(
-      [
-        '~~~tabs',
-        'tab: B',
-        'beta',
-        'tab: X',
-        'target',
-        '~~~',
-        'between',
-        '```tabs',
-        'tab: A',
-        'alpha',
-        '```',
-      ].join('\n'),
+    expect(editor.getValue()).toBe(`${wantedTo}\nbetween\n${wantedFrom}`);
+    expect(result).toMatchObject({
+      ok: true,
+      from: {
+        snapshot: wantedFrom,
+        range: { from: { line: 7, ch: 0 }, to: { line: 10, ch: 3 } },
+        block: { document: { tabs: [{ title: 'A', content: 'alpha\n' }] } },
+      },
+      to: {
+        snapshot: wantedTo,
+        range: { from: { line: 0, ch: 0 }, to: { line: 5, ch: 3 } },
+        block: {
+          document: {
+            tabs: [
+              { title: 'B', content: 'beta\n' },
+              { title: 'X', content: 'target\n' },
+            ],
+          },
+        },
+      },
+    });
+    expect(from.locate()).toMatchObject({ snapshot: wantedFrom, range: result.from.range });
+    expect(to.locate()).toMatchObject({ snapshot: wantedTo, range: result.to.range });
+
+    editor.setValue(
+      `${wantedTo}\nbetween\n${wantedFrom}\nother-target-before\n${wantedTo}\nother-between\n${wantedFrom}\nother-after`,
     );
+    expect(from.locate()?.range.from).toStrictEqual({ line: 7, ch: 0 });
+    expect(to.locate()?.range.from).toStrictEqual({ line: 0, ch: 0 });
+
+    const repeated = replaceLocatedBlock(from, (document) =>
+      addTab(document, { title: 'C', content: 'gamma' }),
+    );
+    const mutatedFrom = ['```tabs', 'tab: A', 'alpha', 'tab: C', 'gamma', '```'].join('\n');
+    expect(repeated).toMatchObject({
+      ok: true,
+      located: {
+        snapshot: mutatedFrom,
+        range: { from: { line: 7, ch: 0 }, to: { line: 12, ch: 3 } },
+        block: {
+          document: { tabs: [{ title: 'A', content: 'alpha\n' }, { title: 'C' }] },
+        },
+      },
+    });
+    expect(editor.getValue()).toBe(
+      `${wantedTo}\nbetween\n${mutatedFrom}\nother-target-before\n${wantedTo}\nother-between\n${wantedFrom}\nother-after`,
+    );
+    expect(from.locate()).toMatchObject({
+      snapshot: mutatedFrom,
+      range: { from: { line: 7, ch: 0 }, to: { line: 12, ch: 3 } },
+    });
+    expect(to.locate()).toMatchObject({
+      snapshot: wantedTo,
+      range: { from: { line: 0, ch: 0 }, to: { line: 5, ch: 3 } },
+    });
+    expect(transaction).toHaveBeenCalledTimes(2);
   });
 
   it('rejects different editors, overlapping blocks, and invalid indices without transactions', () => {
