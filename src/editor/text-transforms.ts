@@ -172,19 +172,37 @@ export function outdentSelection(input: TextTransformInput, tabSize: number): Te
   );
 }
 
+function leadingLineBoundary(input: TextTransformInput): string {
+  return input.selection.from > 0 && input.text[input.selection.from - 1] !== '\n' ? '\n' : '';
+}
+
+function trailingLineBoundary(input: TextTransformInput): string {
+  const following = input.text.slice(input.selection.to, input.selection.to + 2);
+  return input.selection.to < input.text.length &&
+    input.text[input.selection.to] !== '\n' &&
+    following !== '\r\n'
+    ? '\n'
+    : '';
+}
+
 export function insertCodeBlock(input: TextTransformInput): TextTransformResult {
   const selected = input.text.slice(input.selection.from, input.selection.to);
   const longestRun = Math.max(0, ...[...selected.matchAll(/`+/g)].map((match) => match[0].length));
   const fence = '`'.repeat(Math.max(3, longestRun + 1));
-  return wrapSelection(input, `${fence}\n`, `\n${fence}`);
+  return wrapSelection(
+    input,
+    `${leadingLineBoundary(input)}${fence}\n`,
+    `\n${fence}${trailingLineBoundary(input)}`,
+  );
 }
 
 export function insertCallout(input: TextTransformInput): TextTransformResult {
   const selected = input.text.slice(input.selection.from, input.selection.to);
   const quoted = selected.replaceAll('\n', '\n> ');
-  const prefix = '> [!note]\n> ';
+  const prefix = `${leadingLineBoundary(input)}> [!note]\n> `;
+  const suffix = trailingLineBoundary(input);
   return {
-    text: `${input.text.slice(0, input.selection.from)}${prefix}${quoted}${input.text.slice(input.selection.to)}`,
+    text: `${input.text.slice(0, input.selection.from)}${prefix}${quoted}${suffix}${input.text.slice(input.selection.to)}`,
     selection: {
       from: input.selection.from + prefix.length,
       to: input.selection.from + prefix.length + quoted.length,
@@ -193,13 +211,14 @@ export function insertCallout(input: TextTransformInput): TextTransformResult {
 }
 
 export function insertTable(input: TextTransformInput): TextTransformResult {
-  const table = '| Column 1 | Column 2 |\n| --- | --- |\n|  |  |\n';
+  const leadingBoundary = leadingLineBoundary(input);
+  const table = `${leadingBoundary}| Column 1 | Column 2 |\n| --- | --- |\n|  |  |\n`;
   const text = `${input.text.slice(0, input.selection.from)}${table}${input.text.slice(input.selection.to)}`;
   return {
     text,
     selection: {
-      from: input.selection.from + 2,
-      to: input.selection.from + 10,
+      from: input.selection.from + leadingBoundary.length + 2,
+      to: input.selection.from + leadingBoundary.length + 10,
     },
   };
 }
