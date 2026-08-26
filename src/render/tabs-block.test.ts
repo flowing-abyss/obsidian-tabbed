@@ -42,6 +42,7 @@ function createBlock(
     context?: MarkdownPostProcessorContext;
     memory?: SelectionMemory;
     settings?: TabbedSettings;
+    load?: boolean;
   } = {},
 ): {
   block: TabsBlock;
@@ -65,7 +66,9 @@ function createBlock(
     blockHost,
     renderer,
   );
-  block.load();
+  if (options.load !== false) {
+    block.load();
+  }
   return { block, container, app, blockHost };
 }
 
@@ -81,21 +84,26 @@ function sectionContext(
 
 async function sourceBlock(
   renderer: RenderMarkdown,
-  source = twoTabs,
-  settings: TabbedSettings = DEFAULT_SETTINGS,
-  mode: 'source' | 'preview' = 'source',
+  options: {
+    source?: string;
+    settings?: TabbedSettings;
+    mode?: 'source' | 'preview';
+    load?: boolean;
+  } = {},
 ): Promise<{
   block: TabsBlock;
   container: HTMLElement;
   blockHost: ReturnType<typeof host>;
   wrapper: HTMLElement;
 }> {
+  const source = options.source ?? twoTabs;
+  const settings = options.settings ?? DEFAULT_SETTINGS;
   const mockApp = App.createConfigured__();
   const leaf = mockApp.workspace.getLeaf(true);
   await leaf.setViewState({ type: 'markdown' });
   const view = MarkdownView.create2__(leaf);
   await leaf.open(view.asOriginalType7__());
-  vi.spyOn(view, 'getMode').mockReturnValue(mode);
+  vi.spyOn(view, 'getMode').mockReturnValue(options.mode ?? 'source');
   const fullSource = ['```tabs', source, '```'].join('\n');
   view.setViewData(fullSource, false);
   document.body.append(view.containerEl);
@@ -110,6 +118,7 @@ async function sourceBlock(
       lineEnd: fullSource.split('\n').length - 1,
     }),
     settings,
+    load: options.load ?? true,
   });
   return { ...result, wrapper };
 }
@@ -138,6 +147,20 @@ function required<T>(value: T | null | undefined, message: string): T {
     throw new Error(message);
   }
   return value;
+}
+
+function registrationTarget(
+  element: EventTarget,
+  list: HTMLElement,
+  root: HTMLElement,
+): 'list' | 'root' | 'other' {
+  if (element === list) {
+    return 'list';
+  }
+  if (element === root) {
+    return 'root';
+  }
+  return 'other';
 }
 
 describe('TabsBlock initial rendering', () => {
@@ -503,7 +526,7 @@ describe('TabsBlock source-mode controls', () => {
   it('exposes the effective add action, context menu, and enabled panel editor in safe source mode', async () => {
     const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
     const settings = { ...DEFAULT_SETTINGS, doubleClickToEdit: true };
-    const { block, container, blockHost } = await sourceBlock(renderer, twoTabs, settings);
+    const { block, container, blockHost } = await sourceBlock(renderer, { settings });
     const action = container.querySelector<HTMLElement>('.tabbed__action');
     const menuEvent = new MouseEvent('contextmenu', { bubbles: true });
 
@@ -526,7 +549,7 @@ describe('TabsBlock source-mode controls', () => {
 
   it('uses the parsed edit action and omits an action-none control', async () => {
     const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
-    const edit = await sourceBlock(renderer, `action-edit\n${twoTabs}`);
+    const edit = await sourceBlock(renderer, { source: `action-edit\n${twoTabs}` });
     const editAction = edit.container.querySelector<HTMLElement>('.tabbed__action');
 
     expect(editAction?.getAttribute('aria-label')).toBe('Edit tab');
@@ -535,7 +558,7 @@ describe('TabsBlock source-mode controls', () => {
     expect(edit.blockHost.editTab).toHaveBeenCalledWith(edit.block, 1);
     edit.block.unload();
 
-    const none = await sourceBlock(renderer, `action-none\n${twoTabs}`);
+    const none = await sourceBlock(renderer, { source: `action-none\n${twoTabs}` });
     expect(none.container.querySelector('.tabbed__action')).toBeNull();
     none.block.unload();
   });
@@ -543,14 +566,29 @@ describe('TabsBlock source-mode controls', () => {
   it('omits every mutation affordance in preview mode while navigation still works', async () => {
     const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
     const settings = { ...DEFAULT_SETTINGS, doubleClickToEdit: true, dragAndDrop: true };
-    const { block, container, blockHost } = await sourceBlock(
-      renderer,
-      `action-edit\n${twoTabs}`,
+    const { block, container, blockHost } = await sourceBlock(renderer, {
+      source: `action-edit\n${twoTabs}`,
       settings,
-      'preview',
+      mode: 'preview',
+      load: false,
+    });
+    const registerDomEvent = vi.spyOn(block, 'registerDomEvent');
+    block.load();
+    const list = required(
+      container.querySelector<HTMLElement>('.tabbed__list'),
+      'Expected a tab list',
     );
+    const root = required(container.querySelector<HTMLElement>('.tabbed'), 'Expected a tab root');
+    const registrations = registerDomEvent.mock.calls.map(([element, type]) => [
+      registrationTarget(element, list, root),
+      type,
+    ]);
 
     expect(block.locator).toBeNull();
+    expect(registrations).toStrictEqual([
+      ['list', 'click'],
+      ['list', 'keydown'],
+    ]);
     expect(container.querySelector('.tabbed__action')).toBeNull();
     expect(container.querySelector('[draggable="true"]')).toBeNull();
     block.tabElements[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -562,6 +600,47 @@ describe('TabsBlock source-mode controls', () => {
       ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     expect(blockHost.openTabMenu).not.toHaveBeenCalled();
     expect(blockHost.editTab).not.toHaveBeenCalled();
+
+    block.unload();
+  });
+
+  it('registers source mutation listeners once and does not duplicate them on reparse', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const settings = { ...DEFAULT_SETTINGS, doubleClickToEdit: true };
+    const { block, container, blockHost } = await sourceBlock(renderer, {
+      settings,
+      load: false,
+    });
+    const registerDomEvent = vi.spyOn(block, 'registerDomEvent');
+    block.load();
+    const list = required(
+      container.querySelector<HTMLElement>('.tabbed__list'),
+      'Expected a tab list',
+    );
+    const root = required(container.querySelector<HTMLElement>('.tabbed'), 'Expected a tab root');
+    const registrationSummary = () =>
+      registerDomEvent.mock.calls.map(([element, type]) => [
+        registrationTarget(element, list, root),
+        type,
+      ]);
+
+    expect(registrationSummary()).toStrictEqual([
+      ['list', 'click'],
+      ['list', 'contextmenu'],
+      ['list', 'keydown'],
+      ['root', 'dblclick'],
+    ]);
+
+    await block.applySettings({ ...settings, separator: ':: ', defaultTitle: 'Fallback' });
+
+    expect(registrationSummary()).toHaveLength(4);
+    const menuEvent = new MouseEvent('contextmenu', { bubbles: true });
+    block.tabElements[0]?.dispatchEvent(menuEvent);
+    container
+      .querySelector('.tabbed__panel')
+      ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(blockHost.openTabMenu.mock.calls).toStrictEqual([[block, 0, menuEvent]]);
+    expect(blockHost.editTab.mock.calls).toStrictEqual([[block, 0]]);
 
     block.unload();
   });

@@ -324,16 +324,15 @@ export class TabsBlock extends MarkdownRenderChild {
       }
     });
 
-    this.registerDomEvent(this.listEl, 'contextmenu', (event) => {
-      if (this.locatorValue === null) {
-        return;
-      }
-      const index = this.tabIndexFromEvent(event);
-      if (index !== null) {
-        event.preventDefault();
-        this.host.openTabMenu(this, index, event);
-      }
-    });
+    if (this.locatorValue !== null) {
+      this.registerDomEvent(this.listEl, 'contextmenu', (event) => {
+        const index = this.tabIndexFromEvent(event);
+        if (index !== null) {
+          event.preventDefault();
+          this.host.openTabMenu(this, index, event);
+        }
+      });
+    }
 
     this.registerDomEvent(this.listEl, 'keydown', (event) => {
       const index = this.tabIndexFromEvent(event);
@@ -352,16 +351,17 @@ export class TabsBlock extends MarkdownRenderChild {
       }
     });
 
-    this.registerDomEvent(this.rootEl, 'dblclick', (event) => {
-      if (
-        this.locatorValue !== null &&
-        this.settings.doubleClickToEdit &&
-        event.target instanceof Element &&
-        this.body?.panelEl.contains(event.target) === true
-      ) {
-        this.host.editTab(this, this.selection);
-      }
-    });
+    if (this.locatorValue !== null) {
+      this.registerDomEvent(this.rootEl, 'dblclick', (event) => {
+        if (
+          this.settings.doubleClickToEdit &&
+          event.target instanceof Element &&
+          this.body?.panelEl.contains(event.target) === true
+        ) {
+          this.host.editTab(this, this.selection);
+        }
+      });
+    }
   }
 
   private actionFromEvent(event: MouseEvent): 'add' | 'edit' | null {
