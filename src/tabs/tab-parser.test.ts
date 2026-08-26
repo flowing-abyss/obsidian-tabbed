@@ -113,6 +113,49 @@ describe('parseTabsSource', () => {
     ]);
   });
 
+  it('preserves mixed-EOL explicit ranges without normalizing their slices', () => {
+    const parsed = parseTabsSource('tab: One\r\nA\ntab: Two\r\nB', DEFAULT_SETTINGS);
+
+    expect(parsed.preferredLineEnding).toBe('\r\n');
+    expect(parsed.tabs).toStrictEqual([
+      {
+        kind: 'explicit',
+        range: { from: 0, to: 12 },
+        headerRange: { from: 0, to: 10 },
+        titleRange: { from: 5, to: 8 },
+        contentRange: { from: 10, to: 12 },
+        title: 'One',
+        content: 'A\n',
+      },
+      {
+        kind: 'explicit',
+        range: { from: 12, to: 23 },
+        headerRange: { from: 12, to: 22 },
+        titleRange: { from: 17, to: 20 },
+        contentRange: { from: 22, to: 23 },
+        title: 'Two',
+        content: 'B',
+      },
+    ]);
+  });
+
+  it('keeps whitespace-only source in a missing-separator virtual tab', () => {
+    const parsed = parseTabsSource(' \t\r\n ', DEFAULT_SETTINGS);
+
+    expect(parsed).toMatchObject({
+      preferredLineEnding: '\r\n',
+      tabs: [
+        {
+          kind: 'virtual',
+          reason: 'missing-separator',
+          range: { from: 0, to: 5 },
+          title: 'New tab',
+          content: ' \t\r\n ',
+        },
+      ],
+    });
+  });
+
   it('retains unknown configuration text while ignoring it semantically', () => {
     const parsed = parseTabsSource('unknown, top\nkeep this\ntab: A\nbody', DEFAULT_SETTINGS);
 
@@ -190,6 +233,16 @@ describe('parseTabsSource', () => {
 
     expect(parsed.tabs.map((tab) => tab.title)).toStrictEqual(['A', 'B']);
   });
+
+  it('does not close a nested fence with a tab-suffixed marker run', () => {
+    const parsed = parseTabsSource(
+      ['tab: A', '```js', '```\t', 'tab: hidden', '```', 'tab: B'].join('\n'),
+      DEFAULT_SETTINGS,
+    );
+
+    expect(parsed.tabs.map((tab) => tab.title)).toStrictEqual(['A', 'B']);
+    expect(parsed.tabs[0]?.content).toBe('```js\n```\t\ntab: hidden\n```\n');
+  });
 });
 
 describe('parseFullTabsBlock', () => {
@@ -209,5 +262,11 @@ describe('parseFullTabsBlock', () => {
   it('rejects a full block whose final closing fence is mismatched or has trailing text', () => {
     expect(parseFullTabsBlock('```tabs\ntab: A\n~~~', DEFAULT_SETTINGS)).toBeNull();
     expect(parseFullTabsBlock('```tabs\ntab: A\n``` extra', DEFAULT_SETTINGS)).toBeNull();
+  });
+
+  it('rejects a block when its first valid outer close is followed by outside text', () => {
+    const source = ['```tabs', 'tab: A', '```', 'outside', '```'].join('\n');
+
+    expect(parseFullTabsBlock(source, DEFAULT_SETTINGS)).toBeNull();
   });
 });

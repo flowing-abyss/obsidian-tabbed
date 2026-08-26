@@ -57,6 +57,17 @@ describe('addTab', () => {
     expect(successfulDocument(result).source).toBe(':: Target\ntarget body\n:: Copied\ncopy body');
   });
 
+  it('materializes missing-separator source before appending a tab', () => {
+    const result = addTab(parseTabsSource('legacy\r\nbytes', DEFAULT_SETTINGS), {
+      title: 'Added',
+      content: 'two',
+    });
+
+    expect(successfulDocument(result).source).toBe(
+      'tab: New tab\r\nlegacy\r\nbytes\r\ntab: Added\r\ntwo',
+    );
+  });
+
   it.each([Number.NaN, -1, 2.5, 3])('rejects invalid insertion index %s', (index) => {
     const document = parseTabsSource('tab: A', DEFAULT_SETTINGS);
 
@@ -124,6 +135,19 @@ describe('replaceTab', () => {
     });
     expect(document.source).toBe('tab: A\nbody');
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 0.5])(
+    'rejects non-finite or non-integer replacement index %s',
+    (index) => {
+      const document = parseTabsSource('tab: A', DEFAULT_SETTINGS);
+
+      expect(replaceTab(document, index, { title: 'B', content: 'body' })).toStrictEqual({
+        ok: false,
+        code: 'invalid-tab-index',
+        index,
+      });
+    },
+  );
 });
 
 describe('moveTab', () => {
@@ -142,6 +166,49 @@ describe('moveTab', () => {
 
     expect(successfulDocument(result).source).toBe('tab: B\nb\ntab: A\na\n');
   });
+
+  it.each([
+    [0, 1, 'tab: B\nb\ntab: A\na\ntab: C\nc'],
+    [1, 2, 'tab: A\na\ntab: C\nc\ntab: B\nb\n'],
+    [2, 0, 'tab: C\nc\ntab: A\na\ntab: B\nb\n'],
+  ] as const)(
+    'moves first, middle, and last tabs across a missing-final-newline boundary (%i to %i)',
+    (fromIndex, toIndex, expected) => {
+      const result = moveTab(
+        parseTabsSource('tab: A\na\ntab: B\nb\ntab: C\nc', DEFAULT_SETTINGS),
+        fromIndex,
+        toIndex,
+      );
+
+      expect(successfulDocument(result).source).toBe(expected);
+    },
+  );
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 0.5])(
+    'rejects non-finite or non-integer source move index %s',
+    (index) => {
+      const document = parseTabsSource('tab: A\ntab: B', DEFAULT_SETTINGS);
+
+      expect(moveTab(document, index, 0)).toStrictEqual({
+        ok: false,
+        code: 'invalid-tab-index',
+        index,
+      });
+    },
+  );
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 0.5])(
+    'rejects non-finite or non-integer destination move index %s',
+    (index) => {
+      const document = parseTabsSource('tab: A\ntab: B', DEFAULT_SETTINGS);
+
+      expect(moveTab(document, 0, index)).toStrictEqual({
+        ok: false,
+        code: 'invalid-tab-index',
+        index,
+      });
+    },
+  );
 
   it('returns the same document for a valid no-op move', () => {
     const document = parseTabsSource('tab: A', DEFAULT_SETTINGS);

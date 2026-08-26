@@ -17,7 +17,7 @@ describe('serializeFullTabsBlock', () => {
   });
 
   it('grows both outer fences beyond an equal-or-longer marker run in edited content', () => {
-    const original = ['```tabs extra  ', 'tab: A', '`````js', 'x', '`````', '```   '].join('\n');
+    const original = ['```tabs extra  ', 'tab: A', 'x `````', '```   '].join('\n');
     const full = parseFullTabsBlock(original, DEFAULT_SETTINGS);
 
     expect(full).not.toBeNull();
@@ -27,7 +27,7 @@ describe('serializeFullTabsBlock', () => {
     const edited = parseTabsSource(`${full.document.source}changed`, DEFAULT_SETTINGS);
 
     expect(serializeFullTabsBlock(full, edited)).toBe(
-      ['``````tabs extra  ', 'tab: A', '`````js', 'x', '`````', 'changed``````   '].join('\n'),
+      ['``````tabs extra  ', 'tab: A', 'x `````', 'changed``````   '].join('\n'),
     );
   });
 
@@ -44,5 +44,16 @@ describe('serializeFullTabsBlock', () => {
     expect(serializeFullTabsBlock(full, edited)).toBe(
       ['  ~~~tabs metadata  ', 'tab: A', 'replaced', '  ~~~\t'].join('\r\n'),
     );
+  });
+
+  it('preserves an untouched outer final EOL exactly', () => {
+    const original = '~~~tabs\r\ntab: A\r\n~~~\r\n';
+    const full = parseFullTabsBlock(original, DEFAULT_SETTINGS);
+
+    expect(full).not.toBeNull();
+    if (full === null) {
+      throw new Error('Expected a valid tabs block');
+    }
+    expect(serializeFullTabsBlock(full, full.document)).toBe('~~~tabs\r\ntab: A\r\n~~~\r\n');
   });
 });

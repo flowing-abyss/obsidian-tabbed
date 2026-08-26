@@ -5,7 +5,7 @@ import type {
   TabOperationResult,
   VirtualTab,
 } from './tab-model.js';
-import { parseTabsSourceWithSyntax } from './tab-parser.js';
+import { parseTabsSourceWithSyntax } from './tab-parser-internal.js';
 
 function isIndex(value: number, maximum: number): boolean {
   return Number.isFinite(value) && Number.isInteger(value) && value >= 0 && value <= maximum;
