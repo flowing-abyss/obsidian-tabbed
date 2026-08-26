@@ -667,15 +667,20 @@ describe('TabsBlock source-mode controls', () => {
     await block.applySettings({ ...settings, separator: ':: ', defaultTitle: 'Fallback' });
 
     expect(block.locator).not.toBeNull();
-    expect(container.querySelector('.tabbed__action')).not.toBeNull();
+    const firstAction = required(
+      container.querySelector<HTMLElement>('.tabbed__action'),
+      'Expected a source action',
+    );
     expect(addListListener.mock.calls.filter(([type]) => type === 'contextmenu')).toHaveLength(1);
     expect(addRootListener.mock.calls.filter(([type]) => type === 'dblclick')).toHaveLength(1);
 
+    firstAction.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     const firstMenuEvent = new MouseEvent('contextmenu', { bubbles: true });
     block.tabElements[0]?.dispatchEvent(firstMenuEvent);
     container
       .querySelector('.tabbed__panel')
       ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(blockHost.addTab.mock.calls).toStrictEqual([[block]]);
     expect(blockHost.openTabMenu.mock.calls).toStrictEqual([[block, 0, firstMenuEvent]]);
     expect(blockHost.editTab.mock.calls).toStrictEqual([[block, 0]]);
 
@@ -683,6 +688,11 @@ describe('TabsBlock source-mode controls', () => {
 
     expect(addListListener.mock.calls.filter(([type]) => type === 'contextmenu')).toHaveLength(1);
     expect(addRootListener.mock.calls.filter(([type]) => type === 'dblclick')).toHaveLength(1);
+    const secondAction = required(
+      container.querySelector<HTMLElement>('.tabbed__action'),
+      'Expected a source action after a safe reparse',
+    );
+    secondAction.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     const secondMenuEvent = new MouseEvent('contextmenu', { bubbles: true });
     block.tabElements[0]?.dispatchEvent(secondMenuEvent);
     container
@@ -696,12 +706,15 @@ describe('TabsBlock source-mode controls', () => {
       [block, 0],
       [block, 0],
     ]);
+    expect(blockHost.addTab.mock.calls).toStrictEqual([[block], [block]]);
 
     const unloadedPanel = required(
       container.querySelector<HTMLElement>('.tabbed__panel'),
       'Expected an active panel',
     );
+    const removeRootListener = vi.spyOn(root, 'removeEventListener');
     block.unload();
+    expect(removeRootListener.mock.calls.filter(([type]) => type === 'dblclick')).toHaveLength(1);
     list.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
     unloadedPanel.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     expect(blockHost.openTabMenu.mock.calls).toHaveLength(2);
