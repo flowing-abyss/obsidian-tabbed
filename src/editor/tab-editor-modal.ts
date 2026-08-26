@@ -94,6 +94,7 @@ export class TabEditorModal extends Modal {
       return;
     }
     this.modalEl.addClass('tabbed-editor-modal');
+    this.contentEl.addClass('tabbed-editor-modal__content');
     this.contentEl.replaceChildren();
     this.setTitle('Edit tab');
 
@@ -101,7 +102,7 @@ export class TabEditorModal extends Modal {
     owner.load();
     this.owner = owner;
 
-    const titleInput = this.contentEl.createEl('input');
+    const titleInput = this.contentEl.createEl('input', { cls: 'tabbed-editor-modal__title' });
     titleInput.type = 'text';
     titleInput.value = this.current.title;
     titleInput.setAttribute('aria-label', 'Tab title');
@@ -134,6 +135,7 @@ export class TabEditorModal extends Modal {
 
   override onClose(): void {
     this.modalEl.removeClass('tabbed-editor-modal');
+    this.contentEl.removeClass('tabbed-editor-modal__content');
     if (!this.disposed) {
       const snapshot = this.capture(this.editor?.getValue() ?? this.current.content);
       this.clearDebounce();
@@ -162,6 +164,7 @@ export class TabEditorModal extends Modal {
     this.clearDebounce();
     this.teardownEditor();
     this.modalEl.removeClass('tabbed-editor-modal');
+    this.contentEl.removeClass('tabbed-editor-modal__content');
     this.close();
   }
 
@@ -287,7 +290,7 @@ export class TabEditorModal extends Modal {
   }
 
   private addToolbar(owner: Component, settings: TabbedSettings): void {
-    const toolbar = this.contentEl.createDiv();
+    const toolbar = this.contentEl.createDiv({ cls: 'tabbed-editor-modal__toolbar' });
     toolbar.setAttribute('role', 'toolbar');
     toolbar.setAttribute('aria-label', 'Tab editor formatting');
     const actions: readonly ToolbarAction[] = [

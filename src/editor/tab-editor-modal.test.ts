@@ -449,17 +449,27 @@ describe('TabEditorModal conflict and ownership boundaries', () => {
   it('owns its modal styling class only while the editor is open', () => {
     const source = new RealisticEditor(block);
     const modal = openModal(source);
+    const title = modal.contentEl.querySelector('.tabbed-editor-modal__title');
+    const toolbar = modal.contentEl.querySelector('.tabbed-editor-modal__toolbar');
 
     expect(modal.modalEl.classList.contains('tabbed-editor-modal')).toBe(true);
+    expect(modal.contentEl.classList.contains('tabbed-editor-modal__content')).toBe(true);
+    expect(title?.getAttribute('aria-label')).toBe('Tab title');
+    expect(toolbar?.getAttribute('role')).toBe('toolbar');
 
     modal.onClose();
     expect(modal.modalEl.classList.contains('tabbed-editor-modal')).toBe(false);
+    expect(modal.contentEl.classList.contains('tabbed-editor-modal__content')).toBe(false);
 
     modal.openFor(request(source));
     expect(modal.modalEl.classList.contains('tabbed-editor-modal')).toBe(true);
+    expect(modal.contentEl.classList.contains('tabbed-editor-modal__content')).toBe(true);
+    expect(modal.contentEl.querySelector('.tabbed-editor-modal__title')).not.toBeNull();
+    expect(modal.contentEl.querySelector('.tabbed-editor-modal__toolbar')).not.toBeNull();
 
     modal.dispose();
     expect(modal.modalEl.classList.contains('tabbed-editor-modal')).toBe(false);
+    expect(modal.contentEl.classList.contains('tabbed-editor-modal__content')).toBe(false);
   });
 
   it.each([

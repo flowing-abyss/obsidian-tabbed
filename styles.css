@@ -142,30 +142,30 @@
   max-width: calc(100vw - var(--size-4-8));
 }
 
-.tabbed-editor-modal > .modal-content {
+.tabbed-editor-modal > [class~='tabbed-editor-modal__content'] {
   display: flex;
   flex-direction: column;
   gap: var(--size-4-3);
   min-width: 0;
 }
 
-.tabbed-editor-modal [aria-label='Tab title'] {
+.tabbed-editor-modal [class~='tabbed-editor-modal__title'] {
   width: 100%;
 }
 
-.tabbed-editor-modal [role='toolbar'] {
+.tabbed-editor-modal [class~='tabbed-editor-modal__toolbar'] {
   display: flex;
   flex-wrap: wrap;
   gap: var(--size-2-2);
 }
 
-.tabbed-editor-modal .cm-editor {
+.tabbed-editor-modal [class~='tabbed-editor-modal__content'] .cm-editor {
   min-height: min(50vh, 24rem);
   max-height: 70vh;
   border: var(--border-width) solid var(--background-modifier-border);
   border-radius: var(--radius-s);
 }
 
-.tabbed-editor-modal .cm-scroller {
+.tabbed-editor-modal [class~='tabbed-editor-modal__content'] .cm-scroller {
   overflow: auto;
 }

@@ -282,6 +282,10 @@ describe('styles', () => {
     );
   }
 
+  function selectors(rules: readonly CSSStyleRule[]): string[] {
+    return rules.flatMap((rule) => rule.selectorText.split(',').map((selector) => selector.trim()));
+  }
+
   function declaration(rules: readonly CSSStyleRule[], element: Element, property: string): string {
     let value = '';
     for (const rule of rules) {
@@ -348,6 +352,23 @@ describe('styles', () => {
     root.remove();
   });
 
+  it('uses only plugin-scoped focus-visible selectors for keyboard focus', async () => {
+    const focusSelectors = selectors(styleRules(await readStyles())).filter((selector) =>
+      selector.includes(':focus'),
+    );
+
+    expect(focusSelectors.every((selector) => selector.startsWith('.tabbed'))).toBe(true);
+    expect(
+      focusSelectors.some(
+        (selector) => selector.includes(':focus') && !selector.includes(':focus-visible'),
+      ),
+    ).toBe(false);
+    expect(focusSelectors).toStrictEqual([
+      ".tabbed > [class~='tabbed__list'] > [class~='tabbed__tab']:focus-visible",
+      ".tabbed > [class~='tabbed__list'] > [class~='tabbed__action']:focus-visible",
+    ]);
+  });
+
   it('hides only the native edit button belonging to the marked sibling block', async () => {
     const rules = styleRules(await readStyles());
     const container = createDiv();
@@ -372,23 +393,48 @@ describe('styles', () => {
     const rules = styleRules(await readStyles());
     const genericModal = createDiv({ cls: 'modal' });
     const editorModal = createDiv({ cls: 'modal tabbed-editor-modal' });
-    const content = editorModal.createDiv({ cls: 'modal-content' });
+    const content = editorModal.createDiv({
+      cls: 'modal-content tabbed-editor-modal__content',
+    });
+    const title = content.createEl('input', { cls: 'tabbed-editor-modal__title' });
+    const toolbar = content.createDiv({ cls: 'tabbed-editor-modal__toolbar' });
     const editor = content.createDiv({ cls: 'cm-editor' });
 
     expect(declaration(rules, genericModal, 'width')).toBe('');
     expect(declaration(rules, editorModal, '--tabbed-editor-width')).toBe('52rem');
     expect(declaration(rules, editorModal, 'width')).toBe('min(90vw, var(--tabbed-editor-width))');
     expect(declaration(rules, content, 'flex-direction')).toBe('column');
+    expect(declaration(rules, title, 'width')).toBe('100%');
+    expect(declaration(rules, toolbar, 'flex-wrap')).toBe('wrap');
     expect(declaration(rules, editor, 'max-height')).toBe('70vh');
+
+    const modalSelectors = selectors(rules).filter((selector) =>
+      selector.includes('tabbed-editor-modal'),
+    );
+    expect(
+      modalSelectors.some((selector) => selector.includes('tabbed-editor-modal__content')),
+    ).toBe(true);
+    expect(modalSelectors.some((selector) => selector.includes('tabbed-editor-modal__title'))).toBe(
+      true,
+    );
+    expect(
+      modalSelectors.some((selector) => selector.includes('tabbed-editor-modal__toolbar')),
+    ).toBe(true);
+    expect(
+      modalSelectors.some(
+        (selector) =>
+          selector.includes('.modal-content') ||
+          selector.includes('[aria-label') ||
+          selector.includes('[role'),
+      ),
+    ).toBe(false);
   });
 
   it('keeps all plugin chrome scoped and theme-controlled', async () => {
     const styles = await readStyles();
-    const selectors = styleRules(styles).flatMap((rule) =>
-      rule.selectorText.split(',').map((selector) => selector.trim()),
-    );
-    expect(selectors.some((selector) => selector.startsWith('body'))).toBe(false);
-    expect(selectors.some((selector) => selector.startsWith('.tabs-'))).toBe(false);
+    const selectorList = selectors(styleRules(styles));
+    expect(selectorList.some((selector) => selector.startsWith('body'))).toBe(false);
+    expect(selectorList.some((selector) => selector.startsWith('.tabs-'))).toBe(false);
     expect(styles).not.toMatch(/#[\da-f]|\brgb|\bhsl/iu);
     expect(styles).not.toMatch(/\.(?:is-loading|is-error|is-empty|is-success)\b/u);
   });
