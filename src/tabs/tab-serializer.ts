@@ -21,12 +21,17 @@ export function serializeFullTabsBlock(block: FullTabsBlock, document: ParsedTab
   const closingLength = Math.max(block.closingFenceLength, openingLength);
   const openingMarker = block.fence.marker.repeat(openingLength);
   const closingMarker = block.fence.marker.repeat(closingLength);
+  const closingBoundary =
+    document.source.length > 0 && !document.source.endsWith('\n')
+      ? document.preferredLineEnding
+      : '';
 
   return (
     block.source.slice(0, block.openingMarkerRange.from) +
     openingMarker +
     block.source.slice(block.openingMarkerRange.to, block.contentRange.from) +
     document.source +
+    closingBoundary +
     block.source.slice(block.contentRange.to, block.closingMarkerRange.from) +
     closingMarker +
     block.source.slice(block.closingMarkerRange.to)

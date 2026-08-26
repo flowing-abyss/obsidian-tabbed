@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../settings.js';
-import { replaceTab } from './tab-operations.js';
+import { addTab, replaceTab } from './tab-operations.js';
 import { parseFullTabsBlock, parseTabsSource } from './tab-parser.js';
 import { serializeFullTabsBlock } from './tab-serializer.js';
 
@@ -28,7 +28,7 @@ describe('serializeFullTabsBlock', () => {
     const edited = parseTabsSource(`${full.document.source}changed`, DEFAULT_SETTINGS);
 
     expect(serializeFullTabsBlock(full, edited)).toBe(
-      ['``````tabs extra  ', 'tab: A', 'x `````', 'changed``````   '].join('\n'),
+      ['``````tabs extra  ', 'tab: A', 'x `````', 'changed', '``````   '].join('\n'),
     );
   });
 
@@ -74,5 +74,39 @@ describe('serializeFullTabsBlock', () => {
     expect(serializeFullTabsBlock(full, replacement.document)).toBe(
       '~~~tabs\r\ntab: A\r\nchanged\r\n~~~\r\n',
     );
+  });
+
+  it('inserts the preferred LF before the outer close after replacing final content', () => {
+    const full = parseFullTabsBlock('~~~tabs\ntab: A\nalpha\n~~~', DEFAULT_SETTINGS);
+
+    expect(full).not.toBeNull();
+    if (full === null) {
+      throw new Error('Expected a valid tabs block');
+    }
+    const replacement = replaceTab(full.document, 0, { title: 'A', content: 'gamma' });
+    if (!replacement.ok) {
+      throw new Error(`Expected replacement to succeed, received ${replacement.code}`);
+    }
+    const serialized = serializeFullTabsBlock(full, replacement.document);
+
+    expect(serialized).toBe('~~~tabs\ntab: A\ngamma\n~~~');
+    expect(parseFullTabsBlock(serialized, DEFAULT_SETTINGS)).not.toBeNull();
+  });
+
+  it('inserts the preferred CRLF before the outer close after adding final content', () => {
+    const full = parseFullTabsBlock('~~~tabs\r\ntab: A\r\nalpha\r\n~~~', DEFAULT_SETTINGS);
+
+    expect(full).not.toBeNull();
+    if (full === null) {
+      throw new Error('Expected a valid tabs block');
+    }
+    const addition = addTab(full.document, { title: 'B', content: 'omega' });
+    if (!addition.ok) {
+      throw new Error(`Expected addition to succeed, received ${addition.code}`);
+    }
+    const serialized = serializeFullTabsBlock(full, addition.document);
+
+    expect(serialized).toBe('~~~tabs\r\ntab: A\r\nalpha\r\ntab: B\r\nomega\r\n~~~');
+    expect(parseFullTabsBlock(serialized, DEFAULT_SETTINGS)).not.toBeNull();
   });
 });
