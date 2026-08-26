@@ -1,14 +1,170 @@
-/*
-Obsidian loads this file automatically alongside main.js — no <link> or import needed.
-Scope every rule under a plugin-specific class (never bare element/tag selectors) and
-prefer Obsidian's CSS custom properties over hardcoded colors, so the plugin follows
-the user's active theme. Reference: https://docs.obsidian.md/Plugins/User+interface/CSS
-*/
+.tabbed {
+  --tabbed-title-max-width: 18rem;
+  --tabbed-editor-width: 52rem;
 
-.your-id-here-example {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-normal);
-  background-color: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  border: var(--border-width) solid transparent;
   border-radius: var(--radius-s);
-  padding: var(--size-4-2);
+}
+
+.tabbed[class~='tabbed--top'],
+.tabbed[class~='tabbed--bottom'] {
+  flex-direction: column;
+}
+
+.tabbed[class~='tabbed--left'],
+.tabbed[class~='tabbed--right'] {
+  flex-direction: row;
+}
+
+.tabbed > [class~='tabbed__list'] {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--size-2-1);
+  min-width: 0;
+  margin: 0;
+  padding: var(--size-2-2);
+  overflow: auto;
+  background: var(--background-secondary);
+}
+
+.tabbed[class~='tabbed--top'] > [class~='tabbed__list'],
+.tabbed[class~='tabbed--bottom'] > [class~='tabbed__list'] {
+  flex-direction: row;
+  width: 100%;
+}
+
+.tabbed[class~='tabbed--left'] > [class~='tabbed__list'],
+.tabbed[class~='tabbed--right'] > [class~='tabbed__list'] {
+  flex-direction: column;
+  align-items: stretch;
+  max-width: min(40%, var(--tabbed-title-max-width));
+}
+
+.tabbed[class~='tabbed--one'] > [class~='tabbed__list'] {
+  flex-wrap: nowrap;
+}
+
+.tabbed[class~='tabbed--multi'] > [class~='tabbed__list'] {
+  flex-wrap: wrap;
+}
+
+.tabbed > [class~='tabbed__list'] > [class~='tabbed__tab'],
+.tabbed > [class~='tabbed__list'] > [class~='tabbed__action'] {
+  flex: 0 0 auto;
+  min-width: var(--clickable-icon-size);
+  min-height: var(--clickable-icon-size);
+  margin: 0;
+  padding: var(--size-2-2) var(--size-4-2);
+  overflow: hidden;
+  font: inherit;
+  color: var(--text-muted);
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-s);
+  box-shadow: none;
+}
+
+.tabbed > [class~='tabbed__list'] > [class~='tabbed__tab'].is-active {
+  color: var(--text-normal);
+  background: var(--background-primary);
+  box-shadow: inset 0 calc(-1 * var(--border-width)) 0 var(--interactive-accent);
+}
+
+.tabbed[class~='tabbed--bottom'] > [class~='tabbed__list'] > [class~='tabbed__tab'].is-active {
+  box-shadow: inset 0 var(--border-width) 0 var(--interactive-accent);
+}
+
+.tabbed[class~='tabbed--left'] > [class~='tabbed__list'] > [class~='tabbed__tab'].is-active {
+  box-shadow: inset calc(-1 * var(--border-width)) 0 0 var(--interactive-accent);
+}
+
+.tabbed[class~='tabbed--right'] > [class~='tabbed__list'] > [class~='tabbed__tab'].is-active {
+  box-shadow: inset var(--border-width) 0 0 var(--interactive-accent);
+}
+
+.tabbed > [class~='tabbed__list'] > [class~='tabbed__tab']:focus-visible,
+.tabbed > [class~='tabbed__list'] > [class~='tabbed__action']:focus-visible {
+  outline: var(--border-width) solid var(--background-modifier-border-focus);
+  outline-offset: calc(-1 * var(--border-width));
+}
+
+.tabbed[class~='tabbed--limit-title-width'] > [class~='tabbed__list'] > [class~='tabbed__tab'] {
+  max-width: var(--tabbed-title-max-width);
+}
+
+.tabbed[class~='tabbed--one'] [class~='tabbed__title'] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabbed[class~='tabbed--multi'] [class~='tabbed__title'] {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.tabbed [class~='tabbed__title'] > * {
+  display: inline;
+  margin: 0;
+}
+
+.tabbed > [class~='tabbed__panel'] {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: var(--tabbed-content-max-height);
+  padding: var(--tabbed-content-padding);
+  overflow: auto;
+}
+
+.tabbed[class~='tabbed--border-none'],
+.tabbed[class~='tabbed--border-hover'] {
+  border-color: transparent;
+}
+
+.tabbed[class~='tabbed--border-always'],
+.tabbed[class~='tabbed--border-hover']:hover {
+  border-color: var(--tabbed-border-color);
+}
+
+.tabbed-host > .edit-block-button {
+  display: none;
+}
+
+.modal:has(> .modal-content > [aria-label='Tab title']) {
+  width: min(90vw, var(--tabbed-editor-width));
+  max-width: calc(100vw - var(--size-4-8));
+}
+
+.modal:has(> .modal-content > [aria-label='Tab title']) > .modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3);
+  min-width: 0;
+}
+
+.modal:has(> .modal-content > [aria-label='Tab title']) [aria-label='Tab title'] {
+  width: 100%;
+}
+
+.modal:has(> .modal-content > [aria-label='Tab title']) [role='toolbar'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
+}
+
+.modal:has(> .modal-content > [aria-label='Tab title']) .cm-editor {
+  min-height: min(50vh, 24rem);
+  max-height: 70vh;
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+}
+
+.modal:has(> .modal-content > [aria-label='Tab title']) .cm-scroller {
+  overflow: auto;
 }
