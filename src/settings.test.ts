@@ -2,8 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, normalizeSettings } from './settings.js';
 
 describe('normalizeSettings', () => {
-  it('returns defaults for an unrecognized saved value', () => {
-    expect(normalizeSettings(null)).toStrictEqual(DEFAULT_SETTINGS);
+  it('returns the documented defaults for an unrecognized saved value', () => {
+    expect(normalizeSettings(null)).toStrictEqual({
+      separator: 'tab: ',
+      defaultTitle: 'New tab',
+      defaultContent: 'New tab content',
+      action: 'add',
+      showSuccessNotices: true,
+      dragAndDrop: false,
+      doubleClickToEdit: false,
+      showEditorToolbar: true,
+      tabSize: 4,
+      autoSaveDelayMs: 5000,
+      border: 'hover',
+      borderColor: '#e0e0e0',
+      hideNativeEditButton: true,
+      titlePosition: 'top',
+      titleLineMode: 'one',
+      limitTitleWidth: false,
+      contentPadding: '1em 2em',
+      contentMaxHeight: 'none',
+    });
   });
 
   it('accepts valid stored values without changing other defaults', () => {

@@ -18,6 +18,16 @@ describe('formatError', () => {
   it('uses a fallback when a thrown value cannot be stringified', () => {
     expect(formatError(Object.create(null))).toBe('Unknown error');
   });
+
+  it('uses a fallback when an Error message accessor throws', () => {
+    const error = new Proxy(new Error('unavailable'), {
+      get: () => {
+        throw new Error('message accessor failed');
+      },
+    });
+
+    expect(formatError(error)).toBe('Unknown error');
+  });
 });
 
 describe('logError', () => {
