@@ -1,9 +1,11 @@
 {
-  "id": "your-id-here",
-  "name": "Your Title Here",
+  "id": "tabbed",
+  "name": "Tabbed",
   "version": "0.1.0",
-  "minAppVersion": "1.0.3",
-  "description": "Describe what this does in one sentence.",
-  "author": "Your Name",
+  "minAppVersion": "1.13.1",
+  "description": "Create lazy-loading tabs in your notes.",
+  "author": "flowing-abyss",
+  "authorUrl": "https://github.com/flowing-abyss",
+  "fundingUrl": "https://boosty.to/flowing-abyss/donate",
   "isDesktopOnly": false
 }

@@ -1,8 +1,8 @@
 {
-  "name": "your-id-here",
+  "name": "tabbed",
   "version": "0.1.0",
   "private": true,
-  "description": "Describe what this does in one sentence.",
+  "description": "Create lazy-loading tabs in your notes.",
   "main": "main.js",
   "type": "module",
   "scripts": {
@@ -85,7 +85,7 @@
     "knip": "^6.29.0",
     "lint-staged": "^17.2.0",
     "mocha": "10.8.2",
-    "obsidian": "latest",
+    "obsidian": "1.13.1",
     "obsidian-test-mocks": "^3.9.0",
     "prettier": "^3.9.6",
     "prettier-plugin-organize-imports": "^4.3.0",
