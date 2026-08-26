@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../settings.js';
+import { replaceTab } from './tab-operations.js';
 import { parseFullTabsBlock, parseTabsSource } from './tab-parser.js';
 import { serializeFullTabsBlock } from './tab-serializer.js';
 
@@ -55,5 +56,23 @@ describe('serializeFullTabsBlock', () => {
       throw new Error('Expected a valid tabs block');
     }
     expect(serializeFullTabsBlock(full, full.document)).toBe('~~~tabs\r\ntab: A\r\n~~~\r\n');
+  });
+
+  it('preserves an outer trailing CRLF after replacing inner content', () => {
+    const original = '~~~tabs\r\ntab: A\r\nbody\r\n~~~\r\n';
+    const full = parseFullTabsBlock(original, DEFAULT_SETTINGS);
+
+    expect(full).not.toBeNull();
+    if (full === null) {
+      throw new Error('Expected a valid tabs block');
+    }
+    const replacement = replaceTab(full.document, 0, { title: 'A', content: 'changed\r\n' });
+    if (!replacement.ok) {
+      throw new Error(`Expected replacement to succeed, received ${replacement.code}`);
+    }
+
+    expect(serializeFullTabsBlock(full, replacement.document)).toBe(
+      '~~~tabs\r\ntab: A\r\nchanged\r\n~~~\r\n',
+    );
   });
 });
