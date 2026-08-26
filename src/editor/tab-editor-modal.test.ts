@@ -3,6 +3,9 @@ import { App, Editor, FileSystemAdapter, Notice } from 'obsidian-test-mocks/obsi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS, type TabbedSettings } from '../settings.js';
 import { SourceLocator } from '../source/source-locator.js';
+import type { TextSelection, TextTransformInput, TextTransformResult } from './text-transforms.js';
+
+type Transform = (input: TextTransformInput) => TextTransformResult;
 
 interface FakeEditorOptions {
   readonly value: string;
@@ -17,6 +20,7 @@ interface FakeEditorComponent {
   change(value: string): void;
   requestSave(): void;
   getValue(): string;
+  applyTransform(transform: Transform): boolean;
 }
 
 const editorDoubles = vi.hoisted(() => ({ instances: [] as FakeEditorComponent[] }));
@@ -50,7 +54,7 @@ vi.mock('./tab-editor-component.js', async () => {
 
     focus(): void {}
 
-    applyTransform(): boolean {
+    applyTransform(_transform: Transform): boolean {
       return true;
     }
 
@@ -166,6 +170,94 @@ async function flushQueue(): Promise<void> {
   }
 }
 
+interface ToolbarExpectation {
+  readonly label: string;
+  readonly input: TextTransformInput;
+  readonly text: string;
+  readonly selection: TextSelection;
+}
+
+const toolbarExpectations: readonly ToolbarExpectation[] = [
+  {
+    label: 'Bold',
+    input: { text: 'alpha', selection: { from: 0, to: 5 } },
+    text: '**alpha**',
+    selection: { from: 2, to: 7 },
+  },
+  {
+    label: 'Italic',
+    input: { text: 'alpha', selection: { from: 0, to: 5 } },
+    text: '*alpha*',
+    selection: { from: 1, to: 6 },
+  },
+  {
+    label: 'Underline',
+    input: { text: 'alpha', selection: { from: 0, to: 5 } },
+    text: '<u>alpha</u>',
+    selection: { from: 3, to: 8 },
+  },
+  {
+    label: 'Strike',
+    input: { text: 'alpha', selection: { from: 0, to: 5 } },
+    text: '~~alpha~~',
+    selection: { from: 2, to: 7 },
+  },
+  {
+    label: 'Bullet list',
+    input: { text: 'alpha', selection: { from: 0, to: 5 } },
+    text: '- alpha',
+    selection: { from: 2, to: 7 },
+  },
+  {
+    label: 'Numbered list',
+    input: { text: 'alpha', selection: { from: 0, to: 5 } },
+    text: '1. alpha',
+    selection: { from: 3, to: 8 },
+  },
+  {
+    label: 'Task list',
+    input: { text: 'alpha', selection: { from: 0, to: 5 } },
+    text: '- [ ] alpha',
+    selection: { from: 6, to: 11 },
+  },
+  {
+    label: 'Quote',
+    input: { text: 'alpha', selection: { from: 0, to: 5 } },
+    text: '> alpha',
+    selection: { from: 2, to: 7 },
+  },
+  {
+    label: 'Code block',
+    input: { text: 'alpha', selection: { from: 0, to: 5 } },
+    text: '```\nalpha\n```',
+    selection: { from: 4, to: 9 },
+  },
+  {
+    label: 'Callout',
+    input: { text: 'alpha', selection: { from: 0, to: 5 } },
+    text: '> [!note]\n> alpha',
+    selection: { from: 12, to: 17 },
+  },
+  {
+    label: 'Table',
+    input: { text: 'before\nafter', selection: { from: 7, to: 7 } },
+    text: 'before\n| Column 1 | Column 2 |\n| --- | --- |\n|  |  |\nafter',
+    selection: { from: 9, to: 17 },
+  },
+  {
+    label: 'Indent',
+    input: { text: 'alpha', selection: { from: 0, to: 5 } },
+    text: '    alpha',
+    selection: { from: 4, to: 9 },
+  },
+  {
+    label: 'Outdent',
+    input: { text: '    alpha', selection: { from: 4, to: 9 } },
+    text: 'alpha',
+    selection: { from: 0, to: 5 },
+  },
+];
+
 describe('TabEditorModal autosave', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -174,6 +266,27 @@ describe('TabEditorModal autosave', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('maps every rendered toolbar button to its formatting transform', () => {
+    const modal = openModal(new RealisticEditor(block));
+    const editor = currentEditor();
+    const applyTransform = vi.spyOn(editor, 'applyTransform');
+    const buttons = Array.from(
+      modal.contentEl.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'),
+    );
+
+    expect(buttons.map((button) => button.textContent)).toStrictEqual(
+      toolbarExpectations.map(({ label }) => label),
+    );
+    for (const [index, expected] of toolbarExpectations.entries()) {
+      buttons[index]?.click();
+      const transform = applyTransform.mock.calls[index]?.[0];
+      expect(transform?.(expected.input)).toStrictEqual({
+        text: expected.text,
+        selection: expected.selection,
+      });
+    }
   });
 
   it('waits for the full idle delay and restarts the timeout after another change', async () => {
