@@ -82,7 +82,14 @@ export default class TabbedPlugin extends Plugin {
     const blocks = [...this.liveBlocks];
     this.settings = normalizeSettings(next);
     await this.saveSettings();
-    await Promise.all(blocks.map((block) => block.applySettings(this.settings)));
+    await Promise.all(
+      blocks.map(async (block) => {
+        await block.applySettings(this.settings);
+        if (this.liveBlocks.has(block)) {
+          this.dragController?.bind(block);
+        }
+      }),
+    );
   }
 
   async refreshLiveBlocks(): Promise<void> {

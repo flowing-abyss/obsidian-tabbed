@@ -10,7 +10,8 @@ Create a fenced `tabs` block. A line beginning with the configured separator
 (`tab: ` by default) starts a new tab; everything up to the next tab line is
 that tab's Markdown content.
 
-`````markdown
+<!-- prettier-ignore -->
+~~~~~markdown
 ````tabs
 tab: Preview
 This tab contains **Markdown**.
@@ -18,14 +19,9 @@ This tab contains **Markdown**.
 tab: Source
 ```ts
 const lazy = true;
+```
 ````
-`````
-
-```
-
-```
-
-``````
+~~~~~
 
 Tab titles also support Markdown. If a block is empty, Tabbed shows one virtual
 tab using the configured default title and content. A non-empty block with no
@@ -35,7 +31,8 @@ discarded.
 Use a longer outer fence, or switch the outer fence to tildes, when tab content
 contains fenced blocks. This also enables nesting:
 
-`````markdown
+<!-- prettier-ignore -->
+~~~~~markdown
 ````tabs
 tab: Outer one
 The selected outer tab contains another block:
@@ -50,9 +47,8 @@ Nested content two.
 
 tab: Outer two
 Only this body is rendered after selecting it.
-``````
-
 ````
+~~~~~
 
 ### Block options
 
@@ -147,12 +143,16 @@ plugin variables are available to snippets and themes:
 
 | Environment                         | Support                                                              |
 | ----------------------------------- | -------------------------------------------------------------------- |
-| Obsidian desktop                    | 1.13.1 and newer; tested against the minimum and latest stable.      |
+| Obsidian desktop                    | Declared minimum 1.13.1; locally verified with latest stable 1.13.7. |
 | Obsidian Android and iOS            | Supported; drag and drop is disabled.                                |
 | Reading view                        | Navigation and active-body rendering; source mutations are hidden.   |
 | Live Preview / Markdown source mode | Navigation, add/edit/menu controls, modal editing, and desktop drag. |
 | Nested `tabs` blocks                | Supported inside the active body.                                    |
 | Bases and other Markdown embeds     | Supported and loaded only with their active body.                    |
+
+The local minimum-version E2E run was unavailable because the launcher
+classified Obsidian 1.13.1 as a beta build and required Insiders credentials
+or a predownloaded installation. No local minimum-version pass is claimed.
 
 The plugin is fully local and offline. It makes no network requests, sends no
 telemetry or analytics, and never downloads or evaluates remote code.
@@ -185,4 +185,3 @@ Tabbed is a compatibility-focused successor to Huajin's
 [Code Tab](https://github.com/lazyloong/obsidian-code-tab). The established
 `tabs` fence, `tab: ` separator, layout options, nesting, and editing workflow
 remain supported for existing notes.
-````

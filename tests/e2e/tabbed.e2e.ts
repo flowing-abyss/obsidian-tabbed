@@ -113,24 +113,65 @@ describe('Tabbed in a real Obsidian vault', () => {
     const base = panel.$('.bases-embed');
     await base.waitForExist();
     await expect(base).toHaveText(expect.stringContaining('Item 01'));
+    const originalBaseElement = await base.getElement();
+    await browser.execute((element) => {
+      (window as Window & { __tabbedOriginalBase?: HTMLElement }).__tabbedOriginalBase = element;
+    }, originalBaseElement);
 
     await clickTab(outer, 0);
-    await browser.waitUntil(async () => (await visibleElements('.bases-embed')).length === 0);
+    await browser.waitUntil(() =>
+      browser.execute(() => {
+        const original = (window as Window & { __tabbedOriginalBase?: HTMLElement })
+          .__tabbedOriginalBase;
+        return original !== undefined && !original.isConnected;
+      }),
+    );
+    const detachedOriginal = await browser.execute(() => {
+      const original = (window as Window & { __tabbedOriginalBase?: HTMLElement })
+        .__tabbedOriginalBase;
+      return {
+        exists: original !== undefined,
+        isConnected: original?.isConnected ?? false,
+        isInDocument: original === undefined ? false : document.documentElement.contains(original),
+      };
+    });
+    expect(detachedOriginal).toEqual({ exists: true, isConnected: false, isInDocument: false });
 
     await clickTab(outer, 1);
     const recreatedPanel = await directPanel(outer);
     const recreatedBase = recreatedPanel.$('.bases-embed');
     await recreatedBase.waitForExist();
     await expect(recreatedBase).toHaveText(expect.stringContaining('Item 01'));
+    const recreatedBaseElement = await recreatedBase.getElement();
+    const recreatedIdentity = await browser.execute((element) => {
+      const original = (window as Window & { __tabbedOriginalBase?: HTMLElement })
+        .__tabbedOriginalBase;
+      return {
+        differsFromOriginal: original !== element,
+        isConnected: element.isConnected,
+      };
+    }, recreatedBaseElement);
+    expect(recreatedIdentity).toEqual({ differsFromOriginal: true, isConnected: true });
 
-    const scrollContainer = browser.$('.workspace-leaf.mod-active .cm-scroller');
+    const scrollContainer = recreatedBase.$(
+      './ancestor::*[contains(concat(" ", normalize-space(@class), " "), " cm-scroller ")][1]',
+    );
     await scrollContainer.waitForExist();
     const scrollElement = await scrollContainer.getElement();
+    const scrollDimensions = await browser.execute(
+      (element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }),
+      scrollElement,
+    );
+    expect(scrollDimensions.scrollHeight).toBeGreaterThan(scrollDimensions.clientHeight);
+    expect(await recreatedBase.getText()).not.toContain('Item 30');
     await browser.execute((element) => {
       element.scrollTop = element.scrollHeight;
       element.dispatchEvent(new Event('scroll', { bubbles: true }));
     }, scrollElement);
     await expect(recreatedBase).toHaveText(expect.stringContaining('Item 30'));
+    await browser.execute(() => {
+      delete (window as Window & { __tabbedOriginalBase?: HTMLElement }).__tabbedOriginalBase;
+    });
   });
 
   it('saves a modal edit, persists the rendered title, and restores it with Undo', async () => {

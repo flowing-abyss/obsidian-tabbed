@@ -6,7 +6,7 @@ import type {
   PluginManifest,
   PluginSettingTab,
 } from 'obsidian';
-import { App, MarkdownView } from 'obsidian-test-mocks/obsidian';
+import { App, MarkdownView, Menu, Platform } from 'obsidian-test-mocks/obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import manifest from '../manifest.json';
 
@@ -98,7 +98,8 @@ async function loadPlugin(saved: unknown = {}): Promise<Harness> {
   const addCommand = vi.spyOn(plugin, 'addCommand');
   const addSettingTab = vi.spyOn(plugin, 'addSettingTab');
 
-  await plugin.onload();
+  plugin.load();
+  await settle();
 
   const processor = registerProcessor.mock.calls[0]?.[1];
   if (processor === undefined) {
@@ -170,9 +171,35 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+function commandById(harness: Harness, id: string): Command {
+  return required(
+    harness.commands.find((command) => command.id === id),
+    `Expected registered command ${id}`,
+  );
+}
+
+function commandCallback(command: Command): NonNullable<Command['callback']> {
+  return required(command.callback, `Expected callback for ${command.id}`);
+}
+
+function editorCallback(command: Command): NonNullable<Command['editorCallback']> {
+  return required(command.editorCallback, `Expected editor callback for ${command.id}`);
+}
+
+function dragStart(element: HTMLElement): ReturnType<typeof vi.fn> {
+  const setData = vi.fn();
+  const event = new MouseEvent('dragstart', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', {
+    value: { effectAllowed: 'uninitialized', setData },
+  });
+  element.dispatchEvent(event);
+  return setData;
+}
+
 describe('TabbedPlugin', () => {
   beforeEach(() => {
     editorDoubles.instances.length = 0;
+    Platform.isMobile = false;
   });
 
   afterEach(() => {
@@ -341,6 +368,126 @@ describe('TabbedPlugin', () => {
     secondApplied.resolve();
     await update;
     expect(completed).toBe(true);
+  });
+
+  it('rebinds the real drag controller when live settings enable and disable dragging', async () => {
+    const harness = await loadPlugin({ dragAndDrop: false, showSuccessNotices: false });
+    const rendered = await renderBlock(harness);
+    const tab = required(rendered.block.tabElements[0], 'Expected first tab');
+
+    expect(tab.hasAttribute('draggable')).toBe(false);
+
+    await harness.plugin.updateSettings({ ...harness.plugin.settings, dragAndDrop: true });
+    await settle();
+    const enabledTransfer = dragStart(tab);
+
+    expect(tab.getAttribute('draggable')).toBe('true');
+    expect(enabledTransfer).toHaveBeenCalledExactlyOnceWith('text/plain', 'tabbed');
+
+    await harness.plugin.updateSettings({ ...harness.plugin.settings, dragAndDrop: false });
+    const disabledTransfer = dragStart(tab);
+
+    expect(tab.hasAttribute('draggable')).toBe(false);
+    expect(disabledTransfer).not.toHaveBeenCalled();
+  });
+
+  it('moves drag listeners from replaced title elements to the rebuilt titles', async () => {
+    const harness = await loadPlugin({ dragAndDrop: true, showSuccessNotices: false });
+    const rendered = await renderBlock(harness);
+    await settle();
+    const oldTab = required(rendered.block.tabElements[0], 'Expected original first tab');
+    expect(oldTab.getAttribute('draggable')).toBe('true');
+
+    await harness.plugin.updateSettings({
+      ...harness.plugin.settings,
+      titlePosition: 'right',
+    });
+    await settle();
+    const newTab = required(rendered.block.tabElements[0], 'Expected rebuilt first tab');
+    const oldTransfer = dragStart(oldTab);
+    const newTransfer = dragStart(newTab);
+
+    expect(newTab).not.toBe(oldTab);
+    expect(oldTab.hasAttribute('draggable')).toBe(false);
+    expect(oldTransfer).not.toHaveBeenCalled();
+    expect(newTab.getAttribute('draggable')).toBe('true');
+    expect(newTransfer).toHaveBeenCalledExactlyOnceWith('text/plain', 'tabbed');
+  });
+
+  it('does not rebind a block unregistered while its settings update is awaiting', async () => {
+    const harness = await loadPlugin({ dragAndDrop: false, showSuccessNotices: false });
+    const rendered = await renderBlock(harness);
+    const applied = deferred();
+    vi.spyOn(rendered.block, 'applySettings').mockImplementation(() => applied.promise);
+    const bind = vi.spyOn(DragController.prototype, 'bind');
+
+    const update = harness.plugin.updateSettings({
+      ...harness.plugin.settings,
+      dragAndDrop: true,
+    });
+    await settle();
+    rendered.block.unload();
+    bind.mockClear();
+    applied.resolve();
+    await update;
+
+    expect(bind.mock.calls).toHaveLength(0);
+  });
+
+  it('delegates a live tab context menu through the registered block host', async () => {
+    const harness = await loadPlugin({ showSuccessNotices: false });
+    const rendered = await renderBlock(harness);
+    const shown = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    const tab = required(rendered.block.tabElements[0], 'Expected first tab');
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+
+    tab.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(shown).toHaveBeenCalledExactlyOnceWith(event);
+    rendered.block.unload();
+  });
+
+  it('ignores edit delegation for a reading-view block or stale tab index', async () => {
+    const harness = await loadPlugin({ showSuccessNotices: false });
+    const reading = await renderBlock(harness, twoTabs, { mode: 'preview' });
+    const source = await renderBlock(harness);
+    const open = vi.spyOn(TabEditorModal.prototype, 'openFor');
+    const host = (
+      harness.plugin as unknown as {
+        readonly blockHost: { editTab(block: TabsBlock, index: number): void };
+      }
+    ).blockHost;
+
+    host.editTab(reading.block, 0);
+    host.editTab(source.block, 99);
+
+    expect(open).not.toHaveBeenCalled();
+    reading.block.unload();
+    source.block.unload();
+  });
+
+  it('executes registered command callbacks and refreshes only blocks that remain live', async () => {
+    const harness = await loadPlugin({ showSuccessNotices: false });
+    const live = await renderBlock(harness, twoTabs, { sourcePath: 'Live.md' });
+    const removed = await renderBlock(harness, twoTabs, { sourcePath: 'Removed.md' });
+    const refreshLive = vi.spyOn(live.block, 'refreshActiveBody').mockResolvedValue();
+    const refreshRemoved = vi.spyOn(removed.block, 'refreshActiveBody').mockResolvedValue();
+    removed.block.unload();
+
+    await commandCallback(commandById(harness, 'refresh-tab-contents'))();
+
+    expect(refreshLive).toHaveBeenCalledTimes(1);
+    expect(refreshRemoved).not.toHaveBeenCalled();
+
+    live.view.editor.setValue('selected');
+    live.view.editor.setSelection({ line: 0, ch: 0 }, { line: 0, ch: 8 });
+    await editorCallback(commandById(harness, 'create-tabs-block'))(live.view.editor, {} as never);
+
+    expect(live.view.editor.getValue()).toBe(
+      ['```tabs', 'tab: New tab', 'selected', '```'].join('\n'),
+    );
+    live.block.unload();
   });
 
   it('clears drag, selection, live refresh, and a pending modal edit on unload', async () => {
