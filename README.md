@@ -10,8 +10,7 @@ Create a fenced `tabs` block. A line beginning with the configured separator
 (`tab: ` by default) starts a new tab; everything up to the next tab line is
 that tab's Markdown content.
 
-<!-- prettier-ignore -->
-~~~~~markdown
+`````markdown
 ````tabs
 tab: Preview
 This tab contains **Markdown**.
@@ -21,7 +20,7 @@ tab: Source
 const lazy = true;
 ```
 ````
-~~~~~
+`````
 
 Tab titles also support Markdown. If a block is empty, Tabbed shows one virtual
 tab using the configured default title and content. A non-empty block with no
@@ -31,8 +30,7 @@ discarded.
 Use a longer outer fence, or switch the outer fence to tildes, when tab content
 contains fenced blocks. This also enables nesting:
 
-<!-- prettier-ignore -->
-~~~~~markdown
+`````markdown
 ````tabs
 tab: Outer one
 The selected outer tab contains another block:
@@ -48,7 +46,7 @@ Nested content two.
 tab: Outer two
 Only this body is rendered after selecting it.
 ````
-~~~~~
+`````
 
 ### Block options
 
