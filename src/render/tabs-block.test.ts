@@ -347,6 +347,8 @@ describe('TabsBlock body lifecycle', () => {
     const outer = createDiv();
     const wrapper = outer.createDiv({ cls: 'block-language-tabs' });
     const container = wrapper.createDiv();
+    const actions = outer.createDiv({ cls: 'embed-actions' });
+    const editButton = actions.createDiv().createEl('button', { cls: 'edit-block-button' });
     document.body.append(outer);
     const bodyChildren: Component[] = [];
     const renderer = vi.fn<RenderMarkdown>(
@@ -361,6 +363,7 @@ describe('TabsBlock body lifecycle', () => {
 
     expect(wrapper.classList.contains('tabbed-host')).toBe(true);
     expect(outer.classList.contains('tabbed-host')).toBe(false);
+    expect(editButton.matches('.tabbed-host ~ .embed-actions .edit-block-button')).toBe(true);
     expect(blockHost.register).toHaveBeenCalledTimes(1);
 
     block.unload();
@@ -368,6 +371,7 @@ describe('TabsBlock body lifecycle', () => {
     expect(unloadBody).toHaveBeenCalledTimes(1);
     expect(wrapper.classList.contains('tabbed-host')).toBe(false);
     expect(outer.classList.contains('tabbed-host')).toBe(false);
+    expect(editButton.matches('.tabbed-host ~ .embed-actions .edit-block-button')).toBe(false);
     expect(container.querySelector('.tabbed')).toBeNull();
     expect(blockHost.unregister).toHaveBeenCalledTimes(1);
   });

@@ -93,6 +93,7 @@ export class TabEditorModal extends Modal {
     if (request === null || this.disposed) {
       return;
     }
+    this.modalEl.addClass('tabbed-editor-modal');
     this.contentEl.replaceChildren();
     this.setTitle('Edit tab');
 
@@ -132,6 +133,7 @@ export class TabEditorModal extends Modal {
   }
 
   override onClose(): void {
+    this.modalEl.removeClass('tabbed-editor-modal');
     if (!this.disposed) {
       const snapshot = this.capture(this.editor?.getValue() ?? this.current.content);
       this.clearDebounce();
@@ -159,6 +161,7 @@ export class TabEditorModal extends Modal {
     this.generation += 1;
     this.clearDebounce();
     this.teardownEditor();
+    this.modalEl.removeClass('tabbed-editor-modal');
     this.close();
   }
 

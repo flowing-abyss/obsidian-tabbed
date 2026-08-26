@@ -446,6 +446,22 @@ describe('TabEditorModal conflict and ownership boundaries', () => {
     vi.useRealTimers();
   });
 
+  it('owns its modal styling class only while the editor is open', () => {
+    const source = new RealisticEditor(block);
+    const modal = openModal(source);
+
+    expect(modal.modalEl.classList.contains('tabbed-editor-modal')).toBe(true);
+
+    modal.onClose();
+    expect(modal.modalEl.classList.contains('tabbed-editor-modal')).toBe(false);
+
+    modal.openFor(request(source));
+    expect(modal.modalEl.classList.contains('tabbed-editor-modal')).toBe(true);
+
+    modal.dispose();
+    expect(modal.modalEl.classList.contains('tabbed-editor-modal')).toBe(false);
+  });
+
   it.each([
     ['deleted', block, 'deleted'],
     [

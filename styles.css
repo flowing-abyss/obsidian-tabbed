@@ -1,6 +1,5 @@
 .tabbed {
   --tabbed-title-max-width: 18rem;
-  --tabbed-editor-width: 52rem;
 
   display: flex;
   min-width: 0;
@@ -132,39 +131,41 @@
   border-color: var(--tabbed-border-color);
 }
 
-.tabbed-host > .edit-block-button {
+.tabbed-host ~ .embed-actions .edit-block-button {
   display: none;
 }
 
-.modal:has(> .modal-content > [aria-label='Tab title']) {
+.tabbed-editor-modal {
+  --tabbed-editor-width: 52rem;
+
   width: min(90vw, var(--tabbed-editor-width));
   max-width: calc(100vw - var(--size-4-8));
 }
 
-.modal:has(> .modal-content > [aria-label='Tab title']) > .modal-content {
+.tabbed-editor-modal > .modal-content {
   display: flex;
   flex-direction: column;
   gap: var(--size-4-3);
   min-width: 0;
 }
 
-.modal:has(> .modal-content > [aria-label='Tab title']) [aria-label='Tab title'] {
+.tabbed-editor-modal [aria-label='Tab title'] {
   width: 100%;
 }
 
-.modal:has(> .modal-content > [aria-label='Tab title']) [role='toolbar'] {
+.tabbed-editor-modal [role='toolbar'] {
   display: flex;
   flex-wrap: wrap;
   gap: var(--size-2-2);
 }
 
-.modal:has(> .modal-content > [aria-label='Tab title']) .cm-editor {
+.tabbed-editor-modal .cm-editor {
   min-height: min(50vh, 24rem);
   max-height: 70vh;
   border: var(--border-width) solid var(--background-modifier-border);
   border-radius: var(--radius-s);
 }
 
-.modal:has(> .modal-content > [aria-label='Tab title']) .cm-scroller {
+.tabbed-editor-modal .cm-scroller {
   overflow: auto;
 }
