@@ -116,6 +116,18 @@ function validSection(editor: Editor, info: MarkdownSectionInformation): EditorR
   };
 }
 
+function matchesSectionText(snapshot: string, info: MarkdownSectionInformation): boolean {
+  if (snapshot === info.text) {
+    return true;
+  }
+  const lines = sourceLines(info.text);
+  const first = lines[info.lineStart];
+  const last = lines[info.lineEnd];
+  return first !== undefined && last !== undefined
+    ? info.text.slice(first.from, last.contentTo) === snapshot
+    : false;
+}
+
 export class SourceLocator {
   private readonly settings: TabbedSettings;
   private state: LocatorState;
@@ -135,10 +147,14 @@ export class SourceLocator {
     settings: TabbedSettings,
   ): SourceLocator | null {
     const range = validSection(editor, info);
-    if (range === null || editor.getRange(range.from, range.to) !== info.text) {
+    if (range === null) {
       return null;
     }
-    const block = parseFullTabsBlock(info.text, settings);
+    const snapshot = editor.getRange(range.from, range.to);
+    if (!matchesSectionText(snapshot, info)) {
+      return null;
+    }
+    const block = parseFullTabsBlock(snapshot, settings);
     if (block === null) {
       return null;
     }
@@ -146,7 +162,7 @@ export class SourceLocator {
     const anchors = anchorsAt(editor.getValue(), candidate);
     return anchors === null
       ? null
-      : new SourceLocator(editor, settings, { snapshot: info.text, range, block, anchors });
+      : new SourceLocator(editor, settings, { snapshot, range, block, anchors });
   }
 
   locate(): LocatedTabsBlock | null {

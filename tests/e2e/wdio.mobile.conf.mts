@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { env } from 'node:process';
 import { parseObsidianVersions } from 'wdio-obsidian-service';
+import { maxVersion } from './version-utils.mjs';
 
 // Drives the real Obsidian Android app via Appium + an AVD named "obsidian_test" —
 // not desktop's `emulateMobile`, which only fakes the viewport and can't catch
@@ -13,17 +15,20 @@ import { parseObsidianVersions } from 'wdio-obsidian-service';
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 const cacheDir = path.resolve(repoRoot, '.obsidian-cache');
 const vault = path.resolve(repoRoot, 'tests', 'vaults', 'minimal');
+const manifest = JSON.parse(readFileSync(path.resolve(repoRoot, 'manifest.json'), 'utf8')) as {
+  minAppVersion: string;
+};
 
 // Obsidian's Android app requires 1.8.10+; beta versions aren't published for Android.
-// "earliest" resolves to manifest.json's minAppVersion, which this template sets to
-// 1.0.3 (wdio-obsidian-service's own desktop floor) — below the Android floor, and
-// there's no APK for it. Substitute the real Android minimum wherever "earliest" appears.
+// "earliest" normally resolves to manifest.json's minAppVersion. Android cannot
+// install app versions below 1.8.10, so use whichever floor is greater.
 const ANDROID_MIN_VERSION = '1.8.10';
+const earliestAndroidVersion = maxVersion(ANDROID_MIN_VERSION, manifest.minAppVersion);
 const versionsSpec = (
   env['OBSIDIAN_MOBILE_VERSIONS'] ??
   env['OBSIDIAN_VERSIONS'] ??
   'earliest/earliest latest/latest'
-).replace(/\bearliest\b/g, ANDROID_MIN_VERSION);
+).replace(/\bearliest\b/g, earliestAndroidVersion);
 const versions = await parseObsidianVersions(versionsSpec, { cacheDir });
 
 if (env['CI']) {

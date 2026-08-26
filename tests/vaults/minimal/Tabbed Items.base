@@ -1,0 +1,10 @@
+filters:
+  and:
+    - 'file.inFolder("Items")'
+    - 'file.ext == "md"'
+views:
+  - type: table
+    name: Items
+    limit: 100
+    order:
+      - file.name

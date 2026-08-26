@@ -89,6 +89,18 @@ describe('SourceLocator.fromSection', () => {
     });
   });
 
+  it('accepts Live Preview section metadata whose text contains the whole note', () => {
+    const source = `heading\n\n${blockA}\ntrailing`;
+    const editor = new RealisticEditor(source);
+
+    const locator = locatorFor(editor, `${source}\n`, 2, 5);
+
+    expect(locator.locate()).toMatchObject({
+      snapshot: blockA,
+      range: { from: { line: 2, ch: 0 }, to: { line: 5, ch: 3 } },
+    });
+  });
+
   it.each([
     [section(blockA, -1, 3), 'negative'],
     [section(blockA, 0.5, 3), 'fractional'],

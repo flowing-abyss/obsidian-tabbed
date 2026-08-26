@@ -534,6 +534,32 @@ describe('TabsBlock accessible layout', () => {
 });
 
 describe('TabsBlock source-mode controls', () => {
+  it('reconciles mutation controls after the first body render establishes view ownership', async () => {
+    const body = deferred();
+    const renderer = vi.fn<RenderMarkdown>((_app, _markdown, element) =>
+      element.matches('.tabbed__panel') ? body.promise : Promise.resolve(),
+    );
+    const result = await sourceBlock(renderer, { source: `action-edit\n${twoTabs}`, load: false });
+    const viewContainer = required(result.wrapper.parentElement, 'Expected the owning view');
+    viewContainer.remove();
+
+    result.block.load();
+    expect(result.block.locator).toBeNull();
+    expect(result.container.querySelector('.tabbed__action')).toBeNull();
+
+    document.body.append(viewContainer);
+    body.resolve();
+    await settle();
+
+    expect(result.block.locator).not.toBeNull();
+    expect(result.container.querySelector('.tabbed__action')?.getAttribute('aria-label')).toBe(
+      'Edit tab',
+    );
+    expect(result.blockHost.register).toHaveBeenCalledTimes(2);
+
+    result.block.unload();
+  });
+
   it('exposes the effective add action, context menu, and enabled panel editor in safe source mode', async () => {
     const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
     const settings = { ...DEFAULT_SETTINGS, doubleClickToEdit: true };

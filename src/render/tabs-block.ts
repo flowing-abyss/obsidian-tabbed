@@ -177,6 +177,9 @@ export class TabsBlock extends MarkdownRenderChild {
         logError('Could not render tab body', this.errorContext(selected, error));
       }
     }
+    if (generation === this.generation && this.body === body) {
+      this.reconcileLocatorAfterRender();
+    }
   }
 
   refreshActiveBody(): Promise<void> {
@@ -223,6 +226,22 @@ export class TabsBlock extends MarkdownRenderChild {
       return null;
     }
     return SourceLocator.fromSection(view.editor, section, settings);
+  }
+
+  private reconcileLocatorAfterRender(): void {
+    if (this.locatorValue !== null) {
+      return;
+    }
+    const section = this.context.getSectionInfo(this.containerEl);
+    const locator = this.createLocator(section, this.settings);
+    if (locator === null) {
+      return;
+    }
+    this.initializeSection(section);
+    this.locatorValue = locator;
+    this.reconcileMutationInteractions();
+    this.renderAction();
+    this.host.register(this);
   }
 
   private restoreSelection(): void {
