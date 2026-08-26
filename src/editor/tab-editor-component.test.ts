@@ -9,6 +9,8 @@ const codeMirror = vi.hoisted(() => {
   const focused: object[] = [];
 
   class FakeEditorView {
+    static readonly lineWrapping = { kind: 'line-wrapping' };
+
     static readonly updateListener = {
       of: (listener: (update: ViewUpdate) => void) => ({ kind: 'update-listener', listener }),
     };
@@ -379,6 +381,7 @@ describe('TabEditorComponent', () => {
       'history',
       'markdown',
       'syntax-highlighting',
+      'line-wrapping',
       'update-listener',
       'keymap',
     ]);
@@ -418,6 +421,42 @@ describe('TabEditorComponent', () => {
     expect(onChange).toHaveBeenCalledWith('second');
     expect(onSave).toHaveBeenCalledWith('second');
     expect(component.getValue()).toBe('second');
+  });
+
+  it('ignores view updates that do not change the document', () => {
+    const onChange = vi.fn();
+    const component = new TabEditorComponent({
+      parent: createDiv(),
+      value: 'unchanged',
+      tabSize: 4,
+      onChange,
+      onSave: vi.fn(),
+    });
+    component.load();
+
+    const updateListener = taggedExtensions().find(
+      (extension) => extension.kind === 'update-listener',
+    )?.listener;
+    updateListener?.({
+      docChanged: false,
+      state: { doc: { toString: () => 'wrong value' } },
+    } as ViewUpdate);
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(component.getValue()).toBe('unchanged');
+  });
+
+  it('rejects a formatting transform before the editor view loads', () => {
+    const component = new TabEditorComponent({
+      parent: createDiv(),
+      value: 'text',
+      tabSize: 4,
+      onChange: vi.fn(),
+      onSave: vi.fn(),
+    });
+
+    expect(component.applyTransform(toggleBold)).toBe(false);
+    expect(component.getValue()).toBe('text');
   });
 
   it.each(toolbarCases)(

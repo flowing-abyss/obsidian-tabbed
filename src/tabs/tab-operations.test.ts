@@ -68,6 +68,16 @@ describe('addTab', () => {
     );
   });
 
+  it('rejects an added title containing a line ending without mutating input', () => {
+    const document = parseTabsSource('tab: A\nbody', DEFAULT_SETTINGS);
+
+    expect(addTab(document, { title: 'bad\ntitle', content: 'new body' })).toStrictEqual({
+      ok: false,
+      code: 'invalid-title',
+    });
+    expect(document.source).toBe('tab: A\nbody');
+  });
+
   it.each([Number.NaN, -1, 2.5, 3])('rejects invalid insertion index %s', (index) => {
     const document = parseTabsSource('tab: A', DEFAULT_SETTINGS);
 

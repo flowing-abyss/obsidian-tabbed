@@ -348,6 +348,67 @@ describe('tab menu mutations', () => {
     block.unload();
   });
 
+  it('reports an add conflict when Reading view has no writable source locator', async () => {
+    const notice = vi.spyOn(Notice.prototype, 'constructor__');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { block, view, fullSource } = await sourceBlock('tab: A\nalpha', { mode: 'preview' });
+    const transaction = vi.spyOn(view.editor, 'transaction');
+
+    addDefaultTab(block, () => settings());
+
+    expect(view.editor.getValue()).toBe(fullSource);
+    expect(transaction).not.toHaveBeenCalled();
+    expect(notice.mock.calls.map(([message]) => message)).toStrictEqual(['Could not add tab.']);
+    expect(log.mock.calls[0]?.[1]).toMatchObject({
+      action: 'add',
+      failure: { ok: false, reason: 'source-conflict' },
+    });
+    block.unload();
+  });
+
+  it('reports an invalid default title without opening a transaction', async () => {
+    const notice = vi.spyOn(Notice.prototype, 'constructor__');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { block, view, fullSource } = await sourceBlock('tab: A\nalpha');
+    const transaction = vi.spyOn(view.editor, 'transaction');
+
+    addDefaultTab(block, () => settings({ defaultTitle: 'bad\ntitle' }));
+
+    expect(view.editor.getValue()).toBe(fullSource);
+    expect(transaction).not.toHaveBeenCalled();
+    expect(notice.mock.calls.map(([message]) => message)).toStrictEqual(['Could not add tab.']);
+    expect(log.mock.calls[0]?.[1]).toMatchObject({
+      action: 'add',
+      failure: { ok: false, reason: 'operation-failed', code: 'invalid-title' },
+    });
+    block.unload();
+  });
+
+  it.each([
+    ['Copy tab', 'Could not copy tab.'],
+    ['Paste tab', 'Could not paste tab.'],
+  ] as const)(
+    'reports a source conflict when %s runs after the block changed',
+    async (title, message) => {
+      clipboard({ read: async () => 'tab: Pasted\nbody' });
+      const notice = vi.spyOn(Notice.prototype, 'constructor__');
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const { block, view } = await sourceBlock('tab: A\nalpha');
+      const menu = openMenu(block);
+      view.setViewData('changed elsewhere', false);
+
+      await click(menu, title);
+
+      expect(view.editor.getValue()).toBe('changed elsewhere');
+      expect(notice.mock.calls.map(([noticeMessage]) => noticeMessage)).toStrictEqual([message]);
+      expect(log.mock.calls[0]?.[1]).toMatchObject({
+        action: title === 'Copy tab' ? 'copy' : 'paste',
+        failure: { ok: false, reason: 'source-conflict' },
+      });
+      block.unload();
+    },
+  );
+
   it('reports an unexpected clipboard rejection once with formatted diagnostics', async () => {
     clipboard({
       write: async () => {
@@ -367,6 +428,31 @@ describe('tab menu mutations', () => {
       sourcePath: 'Note.md',
       index: 0,
       error: 'permission denied',
+    });
+    block.unload();
+  });
+
+  it('reports a clipboard read rejection without mutating the source', async () => {
+    clipboard({
+      read: async () => {
+        throw new Error('read permission denied');
+      },
+    });
+    const notice = vi.spyOn(Notice.prototype, 'constructor__');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { block, view, fullSource } = await sourceBlock('tab: A\nalpha');
+    const transaction = vi.spyOn(view.editor, 'transaction');
+
+    await click(openMenu(block), 'Paste tab');
+
+    expect(view.editor.getValue()).toBe(fullSource);
+    expect(transaction).not.toHaveBeenCalled();
+    expect(notice.mock.calls.map(([message]) => message)).toStrictEqual(['Could not paste tab.']);
+    expect(log.mock.calls[0]?.[1]).toMatchObject({
+      action: 'paste',
+      sourcePath: 'Note.md',
+      index: 0,
+      error: 'read permission denied',
     });
     block.unload();
   });

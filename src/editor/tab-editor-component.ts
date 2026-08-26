@@ -50,6 +50,7 @@ export class TabEditorComponent extends Component {
         history(),
         markdown(),
         syntaxHighlighting(defaultHighlightStyle),
+        EditorView.lineWrapping,
         EditorView.updateListener.of((update) => {
           if (!update.docChanged) {
             return;

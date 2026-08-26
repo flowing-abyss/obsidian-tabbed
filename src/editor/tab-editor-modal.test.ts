@@ -144,11 +144,16 @@ function request(editor: RealisticEditor): TabEditorRequest {
   };
 }
 
-function openModal(editor: RealisticEditor, delay = 100): TabEditorModal {
+function openModal(
+  editor: RealisticEditor,
+  delay = 100,
+  overrides: Partial<TabbedSettings> = {},
+): TabEditorModal {
   const adapter = FileSystemAdapter.create__('/mock-vault').asOriginalType__();
-  const modal = new TabEditorModal(App.create__(adapter, 'test').asOriginalType__(), () =>
-    settings(delay),
-  );
+  const modal = new TabEditorModal(App.create__(adapter, 'test').asOriginalType__(), () => ({
+    ...settings(delay),
+    ...overrides,
+  }));
   vi.spyOn(modal, 'open').mockImplementation(() => {
     modal.onOpen();
   });
@@ -287,6 +292,82 @@ describe('TabEditorModal autosave', () => {
         selection: expected.selection,
       });
     }
+  });
+
+  it('omits the formatting toolbar when the setting is disabled', () => {
+    const modal = openModal(new RealisticEditor(block), 100, { showEditorToolbar: false });
+
+    expect(modal.contentEl.querySelector('[role="toolbar"]')).toBeNull();
+  });
+
+  it('saves title input and editor content together from the editor save action', async () => {
+    const source = new RealisticEditor(block);
+    const transaction = vi.spyOn(source, 'transaction');
+    const modal = openModal(source);
+    const title = modal.contentEl.querySelector<HTMLInputElement>('.tabbed-editor-modal__title');
+    if (title === null) {
+      throw new Error('Expected title input');
+    }
+    title.value = 'Renamed';
+    title.dispatchEvent(new Event('input'));
+    currentEditor().change('updated body');
+
+    currentEditor().requestSave();
+    await flushQueue();
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(source.getValue()).toBe(
+      ['```tabs', 'tab: Renamed', 'updated body', 'tab: B', 'beta', '```'].join('\n'),
+    );
+  });
+
+  it('treats an unchanged manual save as successful without writing', async () => {
+    const source = new RealisticEditor(block);
+    const transaction = vi.spyOn(source, 'transaction');
+    const modal = openModal(source);
+
+    await expect(modal.save()).resolves.toBe(true);
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it('ignores stale editor changes and repeated disposal after plugin unload', async () => {
+    const source = new RealisticEditor(block);
+    const transaction = vi.spyOn(source, 'transaction');
+    const modal = openModal(source, 10);
+    const close = vi.spyOn(modal, 'close');
+    const editor = currentEditor();
+
+    modal.dispose();
+    editor.change('late change');
+    modal.dispose();
+
+    await expect(modal.save('late change')).resolves.toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(transaction).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(editor.destroyed).toBe(1);
+  });
+
+  it('allows a failed manual revision to retry successfully without a close-time duplicate', async () => {
+    const source = new RealisticEditor(block);
+    const originalTransaction = source.transaction.bind(source);
+    const transaction = vi
+      .spyOn(source, 'transaction')
+      .mockImplementationOnce(() => {
+        throw new Error('temporarily locked');
+      })
+      .mockImplementation(originalTransaction);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const modal = openModal(source);
+    currentEditor().change('retried body');
+
+    await expect(modal.save()).resolves.toBe(false);
+    await expect(modal.save()).resolves.toBe(true);
+    modal.onClose();
+    await flushQueue();
+
+    expect(transaction).toHaveBeenCalledTimes(2);
+    expect(source.getValue()).toContain('retried body');
   });
 
   it('waits for the full idle delay and restarts the timeout after another change', async () => {

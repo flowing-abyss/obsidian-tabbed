@@ -108,6 +108,10 @@ describe('Tabbed in a real Obsidian vault', () => {
 
   it('unloads and recreates a positive-control Base before scrolling to a lower row', async () => {
     const outer = await rootAt(0);
+    const outerElement = await outer.getElement();
+    await browser.execute((element) => {
+      element.setCssProps({ '--tabbed-content-max-height': '240px' });
+    }, outerElement);
     await clickTab(outer, 1);
     const panel = await directPanel(outer);
     const base = panel.$('.bases-embed');
@@ -153,11 +157,7 @@ describe('Tabbed in a real Obsidian vault', () => {
     }, recreatedBaseElement);
     expect(recreatedIdentity).toEqual({ differsFromOriginal: true, isConnected: true });
 
-    const scrollContainer = recreatedBase.$(
-      './ancestor::*[contains(concat(" ", normalize-space(@class), " "), " cm-scroller ")][1]',
-    );
-    await scrollContainer.waitForExist();
-    const scrollElement = await scrollContainer.getElement();
+    const scrollElement = await recreatedPanel.getElement();
     const scrollDimensions = await browser.execute(
       (element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }),
       scrollElement,

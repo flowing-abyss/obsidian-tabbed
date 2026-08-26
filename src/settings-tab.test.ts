@@ -199,6 +199,13 @@ describe('TabbedSettingsTab definitions', () => {
 });
 
 describe('TabbedSettingsTab updates', () => {
+  it('does not expose an arbitrary property for an unknown setting key', () => {
+    const { host, tab } = createTab();
+    Object.assign(host.settings, { obsoleteSetting: 'legacy value' });
+
+    expect(tab.getControlValue('obsoleteSetting')).toBeUndefined();
+  });
+
   it.each([
     ['separator', ':: '],
     ['borderColor', '#abc'],
