@@ -95,6 +95,7 @@ async function sourceBlock(
   container: HTMLElement;
   blockHost: ReturnType<typeof host>;
   wrapper: HTMLElement;
+  setMode: (mode: 'source' | 'preview') => void;
 }> {
   const source = options.source ?? twoTabs;
   const settings = options.settings ?? DEFAULT_SETTINGS;
@@ -103,7 +104,7 @@ async function sourceBlock(
   await leaf.setViewState({ type: 'markdown' });
   const view = MarkdownView.create2__(leaf);
   await leaf.open(view.asOriginalType7__());
-  vi.spyOn(view, 'getMode').mockReturnValue(options.mode ?? 'source');
+  const getMode = vi.spyOn(view, 'getMode').mockReturnValue(options.mode ?? 'source');
   const fullSource = ['```tabs', source, '```'].join('\n');
   view.setViewData(fullSource, false);
   document.body.append(view.containerEl);
@@ -120,7 +121,13 @@ async function sourceBlock(
     settings,
     load: options.load ?? true,
   });
-  return { ...result, wrapper };
+  return {
+    ...result,
+    wrapper,
+    setMode: (mode) => {
+      getMode.mockReturnValue(mode);
+    },
+  };
 }
 
 function deferred(): {
@@ -604,45 +611,101 @@ describe('TabsBlock source-mode controls', () => {
     block.unload();
   });
 
-  it('registers source mutation listeners once and does not duplicate them on reparse', async () => {
+  it('unloads source mutation listeners and removes the action when reparse becomes unsafe', async () => {
     const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
     const settings = { ...DEFAULT_SETTINGS, doubleClickToEdit: true };
-    const { block, container, blockHost } = await sourceBlock(renderer, {
-      settings,
-      load: false,
-    });
-    const registerDomEvent = vi.spyOn(block, 'registerDomEvent');
-    block.load();
+    const { block, container, blockHost, setMode } = await sourceBlock(renderer, { settings });
     const list = required(
       container.querySelector<HTMLElement>('.tabbed__list'),
       'Expected a tab list',
     );
     const root = required(container.querySelector<HTMLElement>('.tabbed'), 'Expected a tab root');
-    const registrationSummary = () =>
-      registerDomEvent.mock.calls.map(([element, type]) => [
-        registrationTarget(element, list, root),
-        type,
-      ]);
+    const removeListListener = vi.spyOn(list, 'removeEventListener');
+    const removeRootListener = vi.spyOn(root, 'removeEventListener');
 
-    expect(registrationSummary()).toStrictEqual([
-      ['list', 'click'],
-      ['list', 'contextmenu'],
-      ['list', 'keydown'],
-      ['root', 'dblclick'],
-    ]);
+    expect(block.locator).not.toBeNull();
+    expect(container.querySelector('.tabbed__action')).not.toBeNull();
+    setMode('preview');
 
     await block.applySettings({ ...settings, separator: ':: ', defaultTitle: 'Fallback' });
 
-    expect(registrationSummary()).toHaveLength(4);
+    expect(block.locator).toBeNull();
+    expect(container.querySelector('.tabbed__action')).toBeNull();
+    expect(removeListListener.mock.calls.filter(([type]) => type === 'contextmenu')).toHaveLength(
+      1,
+    );
+    expect(removeRootListener.mock.calls.filter(([type]) => type === 'dblclick')).toHaveLength(1);
     const menuEvent = new MouseEvent('contextmenu', { bubbles: true });
     block.tabElements[0]?.dispatchEvent(menuEvent);
     container
       .querySelector('.tabbed__panel')
       ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-    expect(blockHost.openTabMenu.mock.calls).toStrictEqual([[block, 0, menuEvent]]);
-    expect(blockHost.editTab.mock.calls).toStrictEqual([[block, 0]]);
+    expect(blockHost.openTabMenu.mock.calls).toStrictEqual([]);
+    expect(blockHost.editTab.mock.calls).toStrictEqual([]);
 
     block.unload();
+  });
+
+  it('installs unsafe-to-safe mutation listeners once across later safe reparses', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const settings = { ...DEFAULT_SETTINGS, doubleClickToEdit: true };
+    const { block, container, blockHost, setMode } = await sourceBlock(renderer, {
+      settings,
+      mode: 'preview',
+    });
+    const list = required(
+      container.querySelector<HTMLElement>('.tabbed__list'),
+      'Expected a tab list',
+    );
+    const root = required(container.querySelector<HTMLElement>('.tabbed'), 'Expected a tab root');
+    const addListListener = vi.spyOn(list, 'addEventListener');
+    const addRootListener = vi.spyOn(root, 'addEventListener');
+
+    expect(block.locator).toBeNull();
+    expect(container.querySelector('.tabbed__action')).toBeNull();
+    setMode('source');
+    await block.applySettings({ ...settings, separator: ':: ', defaultTitle: 'Fallback' });
+
+    expect(block.locator).not.toBeNull();
+    expect(container.querySelector('.tabbed__action')).not.toBeNull();
+    expect(addListListener.mock.calls.filter(([type]) => type === 'contextmenu')).toHaveLength(1);
+    expect(addRootListener.mock.calls.filter(([type]) => type === 'dblclick')).toHaveLength(1);
+
+    const firstMenuEvent = new MouseEvent('contextmenu', { bubbles: true });
+    block.tabElements[0]?.dispatchEvent(firstMenuEvent);
+    container
+      .querySelector('.tabbed__panel')
+      ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(blockHost.openTabMenu.mock.calls).toStrictEqual([[block, 0, firstMenuEvent]]);
+    expect(blockHost.editTab.mock.calls).toStrictEqual([[block, 0]]);
+
+    await block.applySettings({ ...settings, separator: '## ', defaultTitle: 'Still safe' });
+
+    expect(addListListener.mock.calls.filter(([type]) => type === 'contextmenu')).toHaveLength(1);
+    expect(addRootListener.mock.calls.filter(([type]) => type === 'dblclick')).toHaveLength(1);
+    const secondMenuEvent = new MouseEvent('contextmenu', { bubbles: true });
+    block.tabElements[0]?.dispatchEvent(secondMenuEvent);
+    container
+      .querySelector('.tabbed__panel')
+      ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(blockHost.openTabMenu.mock.calls).toStrictEqual([
+      [block, 0, firstMenuEvent],
+      [block, 0, secondMenuEvent],
+    ]);
+    expect(blockHost.editTab.mock.calls).toStrictEqual([
+      [block, 0],
+      [block, 0],
+    ]);
+
+    const unloadedPanel = required(
+      container.querySelector<HTMLElement>('.tabbed__panel'),
+      'Expected an active panel',
+    );
+    block.unload();
+    list.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    unloadedPanel.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(blockHost.openTabMenu.mock.calls).toHaveLength(2);
+    expect(blockHost.editTab.mock.calls).toHaveLength(2);
   });
 
   it('includes the section line in a single current source-body diagnostic', async () => {

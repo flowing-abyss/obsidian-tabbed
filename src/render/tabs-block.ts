@@ -54,6 +54,7 @@ export class TabsBlock extends MarkdownRenderChild {
   private tabs: HTMLElement[] = [];
   private titleChildren: Component[] = [];
   private body: TabBody | null = null;
+  private mutationInteractions: Component | null = null;
   private generation = 0;
 
   constructor(
@@ -115,6 +116,7 @@ export class TabsBlock extends MarkdownRenderChild {
     this.locatorValue = this.createLocator(section, this.settings);
     this.restoreSelection();
     this.registerInteractions();
+    this.reconcileMutationInteractions();
     this.updateHostMarker();
     this.host.register(this);
     this.renderTitlesAndAction();
@@ -126,6 +128,7 @@ export class TabsBlock extends MarkdownRenderChild {
     this.generation += 1;
     this.body?.panelEl.remove();
     this.body = null;
+    this.mutationInteractions = null;
     this.titleChildren = [];
     this.tabs = [];
     this.hostWrapperEl?.removeClass('tabbed-host');
@@ -192,6 +195,7 @@ export class TabsBlock extends MarkdownRenderChild {
 
     this.parsedDocument = parseTabsSource(this.source, settings);
     this.locatorValue = this.createLocator(this.context.getSectionInfo(this.containerEl), settings);
+    this.reconcileMutationInteractions();
     this.selection = this.clampIndex(this.selection);
     this.disposeTitles();
     this.renderTitlesAndAction();
@@ -324,16 +328,6 @@ export class TabsBlock extends MarkdownRenderChild {
       }
     });
 
-    if (this.locatorValue !== null) {
-      this.registerDomEvent(this.listEl, 'contextmenu', (event) => {
-        const index = this.tabIndexFromEvent(event);
-        if (index !== null) {
-          event.preventDefault();
-          this.host.openTabMenu(this, index, event);
-        }
-      });
-    }
-
     this.registerDomEvent(this.listEl, 'keydown', (event) => {
       const index = this.tabIndexFromEvent(event);
       if (index === null) {
@@ -350,18 +344,42 @@ export class TabsBlock extends MarkdownRenderChild {
         this.tabs[focusIndex]?.focus();
       }
     });
+  }
 
-    if (this.locatorValue !== null) {
-      this.registerDomEvent(this.rootEl, 'dblclick', (event) => {
-        if (
-          this.settings.doubleClickToEdit &&
-          event.target instanceof Element &&
-          this.body?.panelEl.contains(event.target) === true
-        ) {
-          this.host.editTab(this, this.selection);
-        }
-      });
+  private reconcileMutationInteractions(): void {
+    if (this.locatorValue === null) {
+      if (this.mutationInteractions !== null) {
+        this.removeChild(this.mutationInteractions);
+        this.mutationInteractions = null;
+      }
+      return;
     }
+    if (this.mutationInteractions !== null) {
+      return;
+    }
+
+    const interactions = this.addChild(new Component());
+    this.mutationInteractions = interactions;
+    interactions.registerDomEvent(this.listEl, 'contextmenu', (event) => {
+      if (this.locatorValue === null) {
+        return;
+      }
+      const index = this.tabIndexFromEvent(event);
+      if (index !== null) {
+        event.preventDefault();
+        this.host.openTabMenu(this, index, event);
+      }
+    });
+    interactions.registerDomEvent(this.rootEl, 'dblclick', (event) => {
+      if (
+        this.locatorValue !== null &&
+        this.settings.doubleClickToEdit &&
+        event.target instanceof Element &&
+        this.body?.panelEl.contains(event.target) === true
+      ) {
+        this.host.editTab(this, this.selection);
+      }
+    });
   }
 
   private actionFromEvent(event: MouseEvent): 'add' | 'edit' | null {
