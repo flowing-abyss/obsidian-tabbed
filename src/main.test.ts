@@ -9,6 +9,7 @@ import type {
 import { App, MarkdownView, Menu, Notice, Platform } from 'obsidian-test-mocks/obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import manifest from '../manifest.json';
+import packageJson from '../package.json';
 
 interface FakeEditorOptions {
   readonly value: string;
@@ -219,7 +220,7 @@ describe('TabbedPlugin', () => {
     expect(manifest).toMatchObject({
       id: 'tabbed',
       name: 'Tabbed',
-      version: '0.1.0',
+      version: packageJson.version,
       minAppVersion: '1.13.7',
       author: 'flowing-abyss',
       authorUrl: 'https://github.com/flowing-abyss',
