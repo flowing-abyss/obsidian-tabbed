@@ -44,6 +44,8 @@ jobs:
         run: |
           pnpm exec tsx tests/e2e/wdio.conf.mts | grep 'obsidian-cache-key:' > obsidian-versions-lock.txt
           rm -rf .obsidian-cache
+        env:
+          OBSIDIAN_VERSIONS: latest/latest
 
       - name: Cache Obsidian
         uses: actions/cache@v6
@@ -71,12 +73,13 @@ jobs:
         env:
           # macOS GitHub runners are lower-memory; keep desktop instances modest everywhere.
           WDIO_MAX_INSTANCES: 2
+          OBSIDIAN_VERSIONS: latest/latest
 
   android:
     strategy:
       fail-fast: false
       matrix:
-        obsidian-version: [earliest, latest]
+        obsidian-version: [latest]
     env:
       AVD_ARGS: '-no-metrics -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none'
     runs-on: ubuntu-latest

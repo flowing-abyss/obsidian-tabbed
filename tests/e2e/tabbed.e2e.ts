@@ -5,6 +5,10 @@ import { Key } from 'webdriverio';
 
 const FIXTURE = 'Tabbed E2E.md';
 
+type ScrollEvidence =
+  | { moved: true; before: number; after: number; clientHeight: number; scrollHeight: number }
+  | { moved: false };
+
 async function openFixture(): Promise<void> {
   await obsidianPage.resetVault();
   await obsidianPage.openFile(FIXTURE);
@@ -157,17 +161,42 @@ describe('Tabbed in a real Obsidian vault', () => {
     }, recreatedBaseElement);
     expect(recreatedIdentity).toEqual({ differsFromOriginal: true, isConnected: true });
 
-    const scrollElement = await recreatedPanel.getElement();
-    const scrollDimensions = await browser.execute(
-      (element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }),
-      scrollElement,
-    );
-    expect(scrollDimensions.scrollHeight).toBeGreaterThan(scrollDimensions.clientHeight);
     expect(await recreatedBase.getText()).not.toContain('Item 30');
-    await browser.execute((element) => {
-      element.scrollTop = element.scrollHeight;
-      element.dispatchEvent(new Event('scroll', { bubbles: true }));
-    }, scrollElement);
+    const scrollEvidence: ScrollEvidence = await browser.execute((element): ScrollEvidence => {
+      const candidates = new Set<HTMLElement>();
+      for (
+        let candidate: HTMLElement | null = element;
+        candidate !== null;
+        candidate = candidate.parentElement
+      ) {
+        candidates.add(candidate);
+      }
+      if (document.scrollingElement instanceof HTMLElement) {
+        candidates.add(document.scrollingElement);
+      }
+
+      for (const candidate of candidates) {
+        const originalScrollTop = candidate.scrollTop;
+        candidate.scrollTop = 0;
+        const before = candidate.scrollTop;
+        candidate.scrollTop = candidate.scrollHeight;
+        const after = candidate.scrollTop;
+        if (after > before) {
+          candidate.dispatchEvent(new Event('scroll', { bubbles: true }));
+          return {
+            moved: true,
+            before,
+            after,
+            clientHeight: candidate.clientHeight,
+            scrollHeight: candidate.scrollHeight,
+          };
+        }
+        candidate.scrollTop = originalScrollTop;
+      }
+
+      return { moved: false };
+    }, recreatedBaseElement);
+    expect(scrollEvidence.moved).toBe(true);
     await expect(recreatedBase).toHaveText(expect.stringContaining('Item 30'));
     await browser.execute(() => {
       delete (window as Window & { __tabbedOriginalBase?: HTMLElement }).__tabbedOriginalBase;

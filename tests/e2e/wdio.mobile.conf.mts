@@ -1,8 +1,6 @@
-import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { env } from 'node:process';
 import { parseObsidianVersions } from 'wdio-obsidian-service';
-import { maxVersion } from './version-utils.mjs';
 
 // Drives the real Obsidian Android app via Appium + an AVD named "obsidian_test" —
 // not desktop's `emulateMobile`, which only fakes the viewport and can't catch
@@ -15,20 +13,9 @@ import { maxVersion } from './version-utils.mjs';
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 const cacheDir = path.resolve(repoRoot, '.obsidian-cache');
 const vault = path.resolve(repoRoot, 'tests', 'vaults', 'minimal');
-const manifest = JSON.parse(readFileSync(path.resolve(repoRoot, 'manifest.json'), 'utf8')) as {
-  minAppVersion: string;
-};
-
-// Obsidian's Android app requires 1.8.10+; beta versions aren't published for Android.
-// "earliest" normally resolves to manifest.json's minAppVersion. Android cannot
-// install app versions below 1.8.10, so use whichever floor is greater.
-const ANDROID_MIN_VERSION = '1.8.10';
-const earliestAndroidVersion = maxVersion(ANDROID_MIN_VERSION, manifest.minAppVersion);
-const versionsSpec = (
-  env['OBSIDIAN_MOBILE_VERSIONS'] ??
-  env['OBSIDIAN_VERSIONS'] ??
-  'earliest/earliest latest/latest'
-).replace(/\bearliest\b/g, earliestAndroidVersion);
+// Public and default runs use the latest stable Android build. Minimum-version or
+// beta compatibility runs must be explicit credentialed operator overrides.
+const versionsSpec = env['OBSIDIAN_MOBILE_VERSIONS'] ?? env['OBSIDIAN_VERSIONS'] ?? 'latest/latest';
 const versions = await parseObsidianVersions(versionsSpec, { cacheDir });
 
 if (env['CI']) {

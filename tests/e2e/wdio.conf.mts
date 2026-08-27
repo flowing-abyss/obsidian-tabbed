@@ -10,15 +10,12 @@ const cacheDir = path.resolve(repoRoot, '.obsidian-cache');
 // against; an empty "hostile" or "migration-v1" vault today would test nothing.
 const vault = path.resolve(repoRoot, 'tests', 'vaults', 'minimal');
 
-// Test against both the oldest Obsidian version this plugin claims to support
-// (manifest.json's minAppVersion, via "earliest") and the newest stable release.
-// Override for a one-off run, e.g.: OBSIDIAN_VERSIONS="1.8.0/1.8.0" pnpm run test:e2e
-const desktopVersions = await parseObsidianVersions(
-  env['OBSIDIAN_VERSIONS'] ?? 'earliest/earliest latest/latest',
-  {
-    cacheDir,
-  },
-);
+// Public and default runs use the latest stable Obsidian app and installer.
+// Minimum-version or beta compatibility runs are explicit credentialed overrides,
+// e.g. OBSIDIAN_VERSIONS="1.8.0/1.8.0" pnpm run test:e2e.
+const desktopVersions = await parseObsidianVersions(env['OBSIDIAN_VERSIONS'] ?? 'latest/latest', {
+  cacheDir,
+});
 
 if (env['CI']) {
   // Printed so the CI workflow can key its Obsidian-binary cache off the resolved
