@@ -1,7 +1,7 @@
 import { Component, Modal, Notice, type App } from 'obsidian';
 import { formatError, logError } from '../diagnostics.js';
 import type { TabbedSettings } from '../settings.js';
-import type { SourceLocator } from '../source/source-locator.js';
+import type { SourceMutationAuthority } from '../source/mutation-authority.js';
 import { replaceLocatedBlock } from '../source/source-mutations.js';
 import { replaceTab } from '../tabs/tab-operations.js';
 import { TabEditorComponent, type TextTransform } from './tab-editor-component.js';
@@ -22,7 +22,7 @@ import {
 } from './text-transforms.js';
 
 export interface TabEditorRequest {
-  readonly locator: SourceLocator;
+  readonly authority: SourceMutationAuthority;
   readonly index: number;
   readonly title: string;
   readonly content: string;
@@ -204,7 +204,7 @@ export class TabEditorModal extends Modal {
 
   private enqueue(snapshot: SaveSnapshot, boundary: SaveBoundary): Promise<boolean> {
     const request = this.request;
-    if (this.disposed || request === null) {
+    if (this.disposed || request?.authority.isActive() !== true) {
       return Promise.resolve(false);
     }
     const key = this.saveKey(snapshot);
@@ -241,17 +241,20 @@ export class TabEditorModal extends Modal {
     generation: number,
     pending: PendingSave,
   ): Promise<boolean> {
-    if (this.disposed || generation !== this.generation) {
+    if (this.disposed || generation !== this.generation || !request.authority.isActive()) {
       return false;
     }
     try {
-      const result = replaceLocatedBlock(request.locator, (document) =>
+      const result = replaceLocatedBlock(request.authority.locator, (document) =>
         replaceTab(document, request.index, {
           title: snapshot.title,
           content: snapshot.content,
         }),
       );
       if (!result.ok) {
+        if (!request.authority.isActive()) {
+          return false;
+        }
         this.reportFailure(request, snapshot, result, pending.noticeOnFailure);
         return false;
       }
@@ -263,6 +266,9 @@ export class TabEditorModal extends Modal {
       }
       return true;
     } catch (error) {
+      if (!request.authority.isActive()) {
+        return false;
+      }
       this.reportFailure(request, snapshot, error, pending.noticeOnFailure);
       return false;
     }

@@ -64,6 +64,40 @@ export function parseTabsSource(source: string, settings: TabbedSettings): Parse
   return parseTabsSourceWithSettings(source, settings);
 }
 
+export function literalTabsDocument(source: string, settings: TabbedSettings): ParsedTabsDocument {
+  const preferredLineEnding = /\r\n|\n/.exec(source)?.[0] === '\r\n' ? '\r\n' : '\n';
+  return {
+    source,
+    syntax: {
+      separator: settings.separator,
+      defaultTitle: settings.defaultTitle,
+      defaultContent: settings.defaultContent,
+      defaultOptions: {
+        position: settings.titlePosition,
+        lineMode: settings.titleLineMode,
+        action: settings.action,
+      },
+    },
+    preambleRange: range(0, 0),
+    preamble: '',
+    options: {
+      position: settings.titlePosition,
+      lineMode: settings.titleLineMode,
+      action: settings.action,
+    },
+    tabs: [
+      {
+        kind: 'virtual',
+        reason: 'missing-separator',
+        range: range(0, source.length),
+        title: settings.defaultTitle,
+        content: source,
+      },
+    ],
+    preferredLineEnding,
+  };
+}
+
 export function parseFullTabsBlock(source: string, settings: TabbedSettings): FullTabsBlock | null {
   const blockLines = scanLines(source);
   const openingLine = blockLines[0];

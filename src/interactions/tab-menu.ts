@@ -165,15 +165,22 @@ async function pasteTab(
   index: number,
   getSettings: () => TabbedSettings,
 ): Promise<void> {
+  const authority = block.captureMutationAuthority();
+  if (authority === null) {
+    return;
+  }
   try {
     const text = await navigator.clipboard.readText();
+    if (!authority.isActive()) {
+      return;
+    }
     if (text.length === 0) {
       reportTypedFailure('paste', block, index, validationFailure('empty-clipboard'));
       return;
     }
-    const locator = block.locator;
-    const located = locator?.locate();
-    if (locator === null || located === null || located === undefined) {
+    const locator = authority.locator;
+    const located = locator.locate();
+    if (located === null) {
       reportTypedFailure('paste', block, index, validationFailure('source-conflict'));
       return;
     }
@@ -188,6 +195,9 @@ async function pasteTab(
     }
     reportSuccess('paste', settings);
   } catch (error) {
+    if (!authority.isActive()) {
+      return;
+    }
     reportUnexpectedFailure('paste', block, index, error);
   }
 }

@@ -6,7 +6,7 @@ import type {
   PluginManifest,
   PluginSettingTab,
 } from 'obsidian';
-import { App, MarkdownView, Menu, Platform } from 'obsidian-test-mocks/obsidian';
+import { App, MarkdownView, Menu, Notice, Platform } from 'obsidian-test-mocks/obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import manifest from '../manifest.json';
 
@@ -78,6 +78,7 @@ interface RenderedBlock {
   readonly block: TabsBlock;
   readonly container: HTMLElement;
   readonly view: MarkdownView;
+  readonly setMode: (mode: 'source' | 'preview') => void;
 }
 
 function createPlugin(): {
@@ -123,7 +124,7 @@ async function renderBlock(
   await leaf.setViewState({ type: 'markdown' });
   const view = MarkdownView.create2__(leaf);
   await leaf.open(view.asOriginalType7__());
-  vi.spyOn(view, 'getMode').mockReturnValue(options.mode ?? 'source');
+  const getMode = vi.spyOn(view, 'getMode').mockReturnValue(options.mode ?? 'source');
   const fullSource = ['```tabs', source, '```'].join('\n');
   view.setViewData(fullSource, false);
   document.body.append(view.containerEl);
@@ -148,7 +149,14 @@ async function renderBlock(
   if (block === undefined) {
     throw new Error('Expected the processor to add a TabsBlock child');
   }
-  return { block, container, view };
+  return {
+    block,
+    container,
+    view,
+    setMode: (mode) => {
+      getMode.mockReturnValue(mode);
+    },
+  };
 }
 
 function required<T>(value: T | null | undefined, message: string): T {
@@ -434,6 +442,88 @@ describe('TabbedPlugin', () => {
     expect(bind.mock.calls).toHaveLength(0);
   });
 
+  it('does not apply or rebind settings to a block unregistered while persistence is pending', async () => {
+    const harness = await loadPlugin({ dragAndDrop: false, showSuccessNotices: false });
+    const rendered = await renderBlock(harness);
+    const persisted = deferred();
+    vi.spyOn(harness.plugin, 'saveData').mockImplementation(() => persisted.promise);
+    const apply = vi.spyOn(rendered.block, 'applySettings');
+    const bind = vi.spyOn(DragController.prototype, 'bind');
+
+    const update = harness.plugin.updateSettings({
+      ...harness.plugin.settings,
+      dragAndDrop: true,
+    });
+    await settle();
+    rendered.block.unload();
+    bind.mockClear();
+    persisted.resolve();
+    await update;
+
+    expect(apply).not.toHaveBeenCalled();
+    expect(bind).not.toHaveBeenCalled();
+  });
+
+  it('does not apply or rebind settings after plugin unload while persistence is pending', async () => {
+    const harness = await loadPlugin({ dragAndDrop: false, showSuccessNotices: false });
+    const rendered = await renderBlock(harness);
+    const persisted = deferred();
+    vi.spyOn(harness.plugin, 'saveData').mockImplementation(() => persisted.promise);
+    const apply = vi.spyOn(rendered.block, 'applySettings');
+    const bind = vi.spyOn(DragController.prototype, 'bind');
+
+    const update = harness.plugin.updateSettings({
+      ...harness.plugin.settings,
+      dragAndDrop: true,
+    });
+    await settle();
+    harness.plugin.onunload();
+    bind.mockClear();
+    persisted.resolve();
+    await update;
+
+    expect(apply).not.toHaveBeenCalled();
+    expect(bind).not.toHaveBeenCalled();
+  });
+
+  it('serializes overlapping updates and skips stale application after the latest request', async () => {
+    const harness = await loadPlugin({ showSuccessNotices: false });
+    const rendered = await renderBlock(harness);
+    const firstPersisted = deferred();
+    let persisted = harness.plugin.settings;
+    const first = { ...harness.plugin.settings, border: 'always' as const };
+    const latest = { ...harness.plugin.settings, border: 'none' as const };
+    const save = vi
+      .spyOn(harness.plugin, 'saveData')
+      .mockImplementationOnce(async (settings) => {
+        await firstPersisted.promise;
+        persisted = settings as TabbedSettings;
+      })
+      .mockImplementationOnce(async (settings) => {
+        persisted = settings as TabbedSettings;
+      });
+    const apply = vi.spyOn(rendered.block, 'applySettings').mockResolvedValue();
+
+    const firstUpdate = harness.plugin.updateSettings(first);
+    await settle();
+    const latestUpdate = harness.plugin.updateSettings(latest);
+    await settle();
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(apply).not.toHaveBeenCalled();
+
+    firstPersisted.resolve();
+    await Promise.all([firstUpdate, latestUpdate]);
+
+    expect(save.mock.calls.map(([settings]) => settings as TabbedSettings)).toStrictEqual([
+      first,
+      latest,
+    ]);
+    expect(persisted).toStrictEqual(latest);
+    expect(apply).toHaveBeenCalledExactlyOnceWith(latest);
+    expect(harness.plugin.settings).toStrictEqual(latest);
+  });
+
   it('delegates a live tab context menu through the registered block host', async () => {
     const harness = await loadPlugin({ showSuccessNotices: false });
     const rendered = await renderBlock(harness);
@@ -465,6 +555,53 @@ describe('TabbedPlugin', () => {
     expect(open).not.toHaveBeenCalled();
     reading.block.unload();
     source.block.unload();
+  });
+
+  it('cancels a queued modal save when its block unloads without a late boundary', async () => {
+    const notice = vi.spyOn(Notice.prototype, 'constructor__');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const dispose = vi.spyOn(TabEditorModal.prototype, 'dispose');
+    const harness = await loadPlugin({ action: 'edit', showSuccessNotices: false });
+    const rendered = await renderBlock(harness, `action-edit\n${twoTabs}`);
+    const transaction = vi.spyOn(rendered.view.editor, 'transaction');
+    required(
+      rendered.container.querySelector<HTMLElement>('[data-tab-action="edit"]'),
+      'Expected edit action',
+    ).click();
+    const editor = required(editorDoubles.instances[0], 'Expected modal editor');
+    editor.options.onChange('must not save');
+    editor.options.onSave('must not save');
+
+    rendered.block.unload();
+    await settle();
+
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(transaction).not.toHaveBeenCalled();
+    expect(notice).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('cancels a queued modal save after a source-to-preview mode switch', async () => {
+    const notice = vi.spyOn(Notice.prototype, 'constructor__');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const harness = await loadPlugin({ action: 'edit', showSuccessNotices: false });
+    const rendered = await renderBlock(harness, `action-edit\n${twoTabs}`);
+    const transaction = vi.spyOn(rendered.view.editor, 'transaction');
+    required(
+      rendered.container.querySelector<HTMLElement>('[data-tab-action="edit"]'),
+      'Expected edit action',
+    ).click();
+    const editor = required(editorDoubles.instances[0], 'Expected modal editor');
+    editor.options.onChange('must not save');
+    editor.options.onSave('must not save');
+
+    rendered.setMode('preview');
+    await settle();
+
+    expect(transaction).not.toHaveBeenCalled();
+    expect(notice).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    rendered.block.unload();
   });
 
   it('executes registered command callbacks and refreshes only blocks that remain live', async () => {

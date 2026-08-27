@@ -295,7 +295,7 @@ describe('DragController drop mutations', () => {
     {
       name: 'top before',
       position: 'top',
-      pointer: 25,
+      coordinates: { clientX: 25, clientY: 75 },
       targetIndex: 0,
       order: ['B', 'A', 'C'],
       successNotice: true,
@@ -303,7 +303,7 @@ describe('DragController drop mutations', () => {
     {
       name: 'bottom after',
       position: 'bottom',
-      pointer: 75,
+      coordinates: { clientX: 75, clientY: 25 },
       targetIndex: 2,
       order: ['A', 'C', 'B'],
       successNotice: false,
@@ -311,7 +311,7 @@ describe('DragController drop mutations', () => {
     {
       name: 'left before',
       position: 'left',
-      pointer: 25,
+      coordinates: { clientX: 75, clientY: 25 },
       targetIndex: 0,
       order: ['B', 'A', 'C'],
       successNotice: false,
@@ -319,14 +319,14 @@ describe('DragController drop mutations', () => {
     {
       name: 'right after',
       position: 'right',
-      pointer: 75,
+      coordinates: { clientX: 25, clientY: 75 },
       targetIndex: 2,
       order: ['A', 'C', 'B'],
       successNotice: false,
     },
   ] as const)(
     'moves on the $name side using the configured axis',
-    async ({ position, pointer, targetIndex, order, successNotice }) => {
+    async ({ position, coordinates, targetIndex, order, successNotice }) => {
       const current = settings({ titlePosition: position, showSuccessNotices: successNotice });
       const fixture = await blocksInView(['tab: A\na\ntab: B\nb\ntab: C\nc'], {
         settings: current,
@@ -342,8 +342,8 @@ describe('DragController drop mutations', () => {
       const data = transfer();
 
       dispatch(tabAt(block, 1), 'dragstart', data);
-      const over = dispatch(target, 'dragover', data, { clientX: pointer, clientY: pointer });
-      dispatch(target, 'drop', data, { clientX: pointer, clientY: pointer });
+      const over = dispatch(target, 'dragover', data, coordinates);
+      dispatch(target, 'drop', data, coordinates);
 
       expect(over.defaultPrevented).toBe(true);
       expect(data.dropEffect).toBe('move');

@@ -8,6 +8,8 @@ import { App, MarkdownView } from 'obsidian-test-mocks/obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS, type TabbedSettings } from '../settings.js';
 import { SelectionMemory } from '../tabs/selection-memory.js';
+import type { ParsedTabsDocument } from '../tabs/tab-model.js';
+import { parseTabsSource } from '../tabs/tab-parser.js';
 import type { RenderMarkdown } from './tab-body.js';
 import { TabsBlock, type TabsBlockHost } from './tabs-block.js';
 
@@ -42,6 +44,7 @@ function createBlock(
     context?: MarkdownPostProcessorContext;
     memory?: SelectionMemory;
     settings?: TabbedSettings;
+    parser?: (source: string, settings: TabbedSettings) => ParsedTabsDocument;
     load?: boolean;
   } = {},
 ): {
@@ -65,6 +68,7 @@ function createBlock(
     options.memory ?? new SelectionMemory(256),
     blockHost,
     renderer,
+    options.parser,
   );
   if (options.load !== false) {
     block.load();
@@ -88,6 +92,7 @@ async function sourceBlock(
     source?: string;
     settings?: TabbedSettings;
     mode?: 'source' | 'preview';
+    parser?: (source: string, settings: TabbedSettings) => ParsedTabsDocument;
     load?: boolean;
   } = {},
 ): Promise<{
@@ -119,6 +124,7 @@ async function sourceBlock(
       lineEnd: fullSource.split('\n').length - 1,
     }),
     settings,
+    ...(options.parser === undefined ? {} : { parser: options.parser }),
     load: options.load ?? true,
   });
   return {
@@ -171,6 +177,42 @@ function registrationTarget(
 }
 
 describe('TabsBlock initial rendering', () => {
+  it('recovers from an initial parser exception with one literal-content tab and diagnostic', async () => {
+    const source = 'tab: Broken\r\nliteral body';
+    const parser = vi.fn(() => {
+      throw new Error('initial parser fault');
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const renderedBodies: string[] = [];
+    const renderer = vi.fn<RenderMarkdown>(async (_app, markdown, element) => {
+      if (element.matches('.tabbed__panel')) {
+        renderedBodies.push(markdown);
+      }
+    });
+    const { block, container } = createBlock(renderer, source, {
+      context: sectionContext({ text: source, lineStart: 4, lineEnd: 5 }, 'Broken.md'),
+      parser,
+    });
+    await settle();
+
+    expect(parser).toHaveBeenCalledTimes(1);
+    expect(block.document.tabs).toHaveLength(1);
+    expect(block.document.tabs[0]).toMatchObject({
+      kind: 'virtual',
+      title: DEFAULT_SETTINGS.defaultTitle,
+      content: source,
+    });
+    expect(block.tabElements).toHaveLength(1);
+    expect(renderedBodies).toStrictEqual([source]);
+    expect(container.querySelector('[role="status"], [role="alert"], .tabbed__error')).toBeNull();
+    expect(log).toHaveBeenCalledExactlyOnceWith('[tabbed] Could not parse tabs block', {
+      path: 'Broken.md',
+      section: { lineStart: 4, lineEnd: 5 },
+      cause: 'initial parser fault',
+    });
+    block.unload();
+  });
+
   it('eagerly renders title Markdown under distinct children and only the first body', () => {
     const calls: Array<{
       markdown: string;
@@ -580,6 +622,7 @@ describe('TabsBlock source-mode controls', () => {
     expect(blockHost.editTab).toHaveBeenCalledWith(block, 0);
 
     block.unload();
+    expect(block.locator).toBeNull();
     action?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(blockHost.addTab).toHaveBeenCalledTimes(1);
   });
@@ -776,6 +819,53 @@ describe('TabsBlock source-mode controls', () => {
 });
 
 describe('TabsBlock selection memory and settings', () => {
+  it('recovers from a settings reparse exception without duplicate diagnostics', async () => {
+    const parser = vi
+      .fn<(source: string, settings: TabbedSettings) => ParsedTabsDocument>()
+      .mockImplementationOnce(parseTabsSource)
+      .mockImplementationOnce(() => {
+        throw new Error('settings parser fault');
+      });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const renderedBodies: string[] = [];
+    const renderer = vi.fn<RenderMarkdown>(async (_app, markdown, element) => {
+      if (element.matches('.tabbed__panel')) {
+        renderedBodies.push(markdown);
+      }
+    });
+    const result = await sourceBlock(renderer, {
+      parser,
+    });
+
+    await result.block.applySettings({
+      ...DEFAULT_SETTINGS,
+      separator: ':: ',
+      defaultTitle: 'Recovery',
+    });
+
+    expect(parser).toHaveBeenCalledTimes(2);
+    expect(result.block.document.tabs).toHaveLength(1);
+    expect(result.block.document.tabs[0]).toMatchObject({
+      kind: 'virtual',
+      title: 'Recovery',
+      content: twoTabs,
+    });
+    expect(result.block.tabElements).toHaveLength(1);
+    expect(renderedBodies[renderedBodies.length - 1]).toBe(twoTabs);
+    expect(result.block.locator).toBeNull();
+    expect(result.container.querySelector('.tabbed__action')).toBeNull();
+    expect(result.blockHost.register).toHaveBeenCalledTimes(1);
+    expect(
+      result.container.querySelector('[role="status"], [role="alert"], .tabbed__error'),
+    ).toBeNull();
+    expect(log).toHaveBeenCalledExactlyOnceWith('[tabbed] Could not parse tabs block', {
+      path: 'Note.md',
+      section: { lineStart: 0, lineEnd: 5 },
+      cause: 'settings parser fault',
+    });
+    result.block.unload();
+  });
+
   it('restores the same source key and clamps a remembered deleted tab to the last tab', async () => {
     const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
     const memory = new SelectionMemory(256);

@@ -135,8 +135,9 @@ function settings(autoSaveDelayMs: number): TabbedSettings {
 }
 
 function request(editor: RealisticEditor): TabEditorRequest {
+  const locator = locatorAt(editor);
   return {
-    locator: locatorAt(editor),
+    authority: { locator, isActive: () => true },
     index: 0,
     title: 'A',
     content: 'alpha',

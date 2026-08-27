@@ -34,7 +34,7 @@ async function sourceBlock(
   await leaf.setViewState({ type: 'markdown' });
   const view = MarkdownView.create2__(leaf);
   await leaf.open(view.asOriginalType7__());
-  vi.spyOn(view, 'getMode').mockReturnValue(options.mode ?? 'source');
+  const getMode = vi.spyOn(view, 'getMode').mockReturnValue(options.mode ?? 'source');
   const fullSource = `\`\`\`tabs\n${inner}${inner.length > 0 && !inner.endsWith('\n') ? '\n' : ''}\`\`\``;
   view.setViewData(fullSource, false);
   document.body.append(view.containerEl);
@@ -63,7 +63,14 @@ async function sourceBlock(
   );
   block.load();
   await Promise.resolve();
-  return { block, view, fullSource };
+  return {
+    block,
+    view,
+    fullSource,
+    setMode: (mode: 'source' | 'preview') => {
+      getMode.mockReturnValue(mode);
+    },
+  };
 }
 
 function openMenu(block: TabsBlock, index = 0, getSettings = () => settings()): Menu {
@@ -103,6 +110,20 @@ function clipboard(options: {
   };
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value });
   return value;
+}
+
+function deferredValue<T>(): {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+  reject(error: unknown): void;
+} {
+  let resolvePromise!: (value: T) => void;
+  let rejectPromise!: (error: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  return { promise, resolve: resolvePromise, reject: rejectPromise };
 }
 
 afterEach(() => {
@@ -324,6 +345,59 @@ describe('tab menu mutations', () => {
       ['```tabs', 'tab: A', 'alpha', 'tab: Header only', '```'].join('\n'),
     );
     block.unload();
+  });
+
+  it.each(['unload', 'preview', 'editor-change'] as const)(
+    'silently cancels a deferred paste after block %s revokes source ownership',
+    async (revocation) => {
+      const read = deferredValue<string>();
+      clipboard({ read: () => read.promise });
+      const notice = vi.spyOn(Notice.prototype, 'constructor__');
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const source = await sourceBlock('tab: A\nalpha');
+      const originalEditor = source.view.editor;
+      const transaction = vi.spyOn(originalEditor, 'transaction');
+      const pending = click(openMenu(source.block), 'Paste tab');
+      await Promise.resolve();
+
+      if (revocation === 'unload') {
+        source.block.unload();
+      } else if (revocation === 'preview') {
+        source.setMode('preview');
+      } else {
+        source.view.editor = Object.create(originalEditor) as typeof originalEditor;
+      }
+      read.resolve('tab: Late\nbody');
+      await pending;
+
+      expect(transaction).not.toHaveBeenCalled();
+      expect(originalEditor.getValue()).toBe(source.fullSource);
+      expect(notice).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+      if (revocation !== 'unload') {
+        source.block.unload();
+      }
+    },
+  );
+
+  it('silently cancels a deferred clipboard rejection after block unload', async () => {
+    const read = deferredValue<string>();
+    clipboard({ read: () => read.promise });
+    const notice = vi.spyOn(Notice.prototype, 'constructor__');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const source = await sourceBlock('tab: A\nalpha');
+    const transaction = vi.spyOn(source.view.editor, 'transaction');
+    const pending = click(openMenu(source.block), 'Paste tab');
+    await Promise.resolve();
+
+    source.block.unload();
+    read.reject(new Error('late clipboard failure'));
+    await pending;
+
+    expect(transaction).not.toHaveBeenCalled();
+    expect(source.view.editor.getValue()).toBe(source.fullSource);
+    expect(notice).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
   });
 
   it('reports a typed source conflict once without opening a transaction', async () => {

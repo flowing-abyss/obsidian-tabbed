@@ -8,10 +8,11 @@ import {
 } from 'obsidian';
 import { formatError, logError } from '../diagnostics.js';
 import type { TabbedSettings } from '../settings.js';
+import type { SourceMutationAuthority } from '../source/mutation-authority.js';
 import { SourceLocator } from '../source/source-locator.js';
 import type { SelectionMemory } from '../tabs/selection-memory.js';
 import type { ParsedTabsDocument } from '../tabs/tab-model.js';
-import { parseTabsSource } from '../tabs/tab-parser.js';
+import { literalTabsDocument, parseTabsSource } from '../tabs/tab-parser.js';
 import { findOwningMarkdownView } from './find-owning-view.js';
 import { TabBody, renderMarkdown, type RenderMarkdown } from './tab-body.js';
 
@@ -39,6 +40,7 @@ export class TabsBlock extends MarkdownRenderChild {
   private readonly source: string;
   private readonly context: MarkdownPostProcessorContext;
   private readonly renderer: RenderMarkdown;
+  private readonly parser: (source: string, settings: TabbedSettings) => ParsedTabsDocument;
   private readonly rootEl: HTMLElement;
   private readonly listEl: HTMLElement;
   private readonly hostWrapperEl: HTMLElement | null;
@@ -56,6 +58,8 @@ export class TabsBlock extends MarkdownRenderChild {
   private body: TabBody | null = null;
   private mutationInteractions: Component | null = null;
   private generation = 0;
+  private locatorGeneration = 0;
+  private parserFailed = false;
 
   constructor(
     ...[
@@ -67,6 +71,7 @@ export class TabsBlock extends MarkdownRenderChild {
       selectionMemory,
       host,
       renderer = renderMarkdown,
+      parser = parseTabsSource,
     ]: [
       App,
       HTMLElement,
@@ -76,6 +81,7 @@ export class TabsBlock extends MarkdownRenderChild {
       SelectionMemory,
       TabsBlockHost,
       RenderMarkdown?,
+      ((source: string, settings: TabbedSettings) => ParsedTabsDocument)?,
     ]
   ) {
     super(containerEl);
@@ -84,10 +90,11 @@ export class TabsBlock extends MarkdownRenderChild {
     this.context = context;
     this.sourcePath = context.sourcePath;
     this.renderer = renderer;
+    this.parser = parser;
     this.selectionMemory = selectionMemory;
     this.host = host;
     this.settings = { ...settings };
-    this.parsedDocument = parseTabsSource(source, settings);
+    this.parsedDocument = this.parseDocument(settings);
     this.rootEl = containerEl.createDiv({ cls: 'tabbed' });
     this.listEl = this.rootEl.createDiv({ cls: 'tabbed__list', attr: { role: 'tablist' } });
     this.hostWrapperEl =
@@ -110,10 +117,26 @@ export class TabsBlock extends MarkdownRenderChild {
     return this.tabs;
   }
 
+  captureMutationAuthority(): SourceMutationAuthority | null {
+    const locator = this.locatorValue;
+    if (locator === null) {
+      return null;
+    }
+    const generation = this.locatorGeneration;
+    const authority: SourceMutationAuthority = {
+      locator,
+      isActive: () =>
+        generation === this.locatorGeneration &&
+        this.locatorValue === locator &&
+        this.ownsSourceLocator(locator),
+    };
+    return authority.isActive() ? authority : null;
+  }
+
   override onload(): void {
     const section = this.context.getSectionInfo(this.containerEl);
     this.initializeSection(section);
-    this.locatorValue = this.createLocator(section, this.settings);
+    this.locatorValue = this.parserFailed ? null : this.createLocator(section, this.settings);
     this.restoreSelection();
     this.registerInteractions();
     this.reconcileMutationInteractions();
@@ -126,6 +149,8 @@ export class TabsBlock extends MarkdownRenderChild {
 
   override onunload(): void {
     this.generation += 1;
+    this.locatorGeneration += 1;
+    this.locatorValue = null;
     this.body?.panelEl.remove();
     this.body = null;
     this.mutationInteractions = null;
@@ -196,8 +221,11 @@ export class TabsBlock extends MarkdownRenderChild {
       return;
     }
 
-    this.parsedDocument = parseTabsSource(this.source, settings);
-    this.locatorValue = this.createLocator(this.context.getSectionInfo(this.containerEl), settings);
+    this.parsedDocument = this.parseDocument(settings);
+    this.locatorGeneration += 1;
+    this.locatorValue = this.parserFailed
+      ? null
+      : this.createLocator(this.context.getSectionInfo(this.containerEl), settings);
     this.reconcileMutationInteractions();
     this.selection = this.clampIndex(this.selection);
     this.disposeTitles();
@@ -214,6 +242,25 @@ export class TabsBlock extends MarkdownRenderChild {
     this.selectionKey = `${this.sourcePath}:${section.lineStart}`;
   }
 
+  private parseDocument(settings: TabbedSettings): ParsedTabsDocument {
+    try {
+      const document = this.parser(this.source, settings);
+      this.parserFailed = false;
+      return document;
+    } catch (error) {
+      this.parserFailed = true;
+      const section = this.context.getSectionInfo(this.containerEl);
+      logError('Could not parse tabs block', {
+        path: this.sourcePath,
+        ...(section === null
+          ? {}
+          : { section: { lineStart: section.lineStart, lineEnd: section.lineEnd } }),
+        cause: formatError(error),
+      });
+      return literalTabsDocument(this.source, settings);
+    }
+  }
+
   private createLocator(
     section: MarkdownSectionInformation | null,
     settings: TabbedSettings,
@@ -228,8 +275,13 @@ export class TabsBlock extends MarkdownRenderChild {
     return SourceLocator.fromSection(view.editor, section, settings);
   }
 
+  private ownsSourceLocator(locator: SourceLocator): boolean {
+    const view = findOwningMarkdownView(this.app, this.containerEl);
+    return view?.getMode() === 'source' && view.editor === locator.editor;
+  }
+
   private reconcileLocatorAfterRender(): void {
-    if (this.locatorValue !== null) {
+    if (this.parserFailed || this.locatorValue !== null) {
       return;
     }
     const section = this.context.getSectionInfo(this.containerEl);
@@ -238,6 +290,7 @@ export class TabsBlock extends MarkdownRenderChild {
       return;
     }
     this.initializeSection(section);
+    this.locatorGeneration += 1;
     this.locatorValue = locator;
     this.reconcileMutationInteractions();
     this.renderAction();

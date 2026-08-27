@@ -15,12 +15,22 @@ export default class TabbedPlugin extends Plugin {
   private readonly selectionMemory = new SelectionMemory(256);
   private dragController: DragController | null = null;
   private editorModal: TabEditorModal | null = null;
+  private editorBlock: TabsBlock | null = null;
+  private settingsUpdateTail: Promise<void> = Promise.resolve();
+  private settingsUpdateRevision = 0;
+  private lifecycleGeneration = 0;
+  private disposed = true;
   private readonly blockHost: TabsBlockHost = {
     register: (block) => {
       this.liveBlocks.add(block);
       this.dragController?.bind(block);
     },
     unregister: (block) => {
+      if (this.editorBlock === block) {
+        this.editorModal?.dispose();
+        this.editorModal = null;
+        this.editorBlock = null;
+      }
       this.dragController?.unbind(block);
       this.liveBlocks.delete(block);
     },
@@ -36,9 +46,13 @@ export default class TabbedPlugin extends Plugin {
   };
 
   override async onload(): Promise<void> {
+    this.disposed = false;
+    this.lifecycleGeneration += 1;
     try {
       this.settings = normalizeSettings(await this.loadData());
     } catch (error) {
+      this.disposed = true;
+      this.lifecycleGeneration += 1;
       throw new Error(`Could not load Tabbed settings: ${formatError(error)}`);
     }
 
@@ -66,8 +80,12 @@ export default class TabbedPlugin extends Plugin {
   }
 
   override onunload(): void {
+    this.disposed = true;
+    this.lifecycleGeneration += 1;
+    this.settingsUpdateRevision += 1;
     this.editorModal?.dispose();
     this.editorModal = null;
+    this.editorBlock = null;
     this.dragController?.clear();
     this.dragController = null;
     this.selectionMemory.clear();
@@ -79,17 +97,37 @@ export default class TabbedPlugin extends Plugin {
   }
 
   async updateSettings(next: TabbedSettings): Promise<void> {
-    const blocks = [...this.liveBlocks];
-    this.settings = normalizeSettings(next);
-    await this.saveSettings();
-    await Promise.all(
-      blocks.map(async (block) => {
-        await block.applySettings(this.settings);
-        if (this.liveBlocks.has(block)) {
-          this.dragController?.bind(block);
-        }
-      }),
+    const settings = normalizeSettings(next);
+    const revision = ++this.settingsUpdateRevision;
+    const generation = this.lifecycleGeneration;
+    this.settings = settings;
+
+    const update = this.settingsUpdateTail.then(async () => {
+      if (!this.isCurrentSettingsUpdate(revision, generation)) {
+        return;
+      }
+      await this.saveData(settings);
+      if (!this.isCurrentSettingsUpdate(revision, generation)) {
+        return;
+      }
+      const blocks = [...this.liveBlocks];
+      await Promise.all(
+        blocks.map(async (block) => {
+          if (!this.isCurrentSettingsUpdate(revision, generation) || !this.liveBlocks.has(block)) {
+            return;
+          }
+          await block.applySettings(settings);
+          if (this.isCurrentSettingsUpdate(revision, generation) && this.liveBlocks.has(block)) {
+            this.dragController?.bind(block);
+          }
+        }),
+      );
+    });
+    this.settingsUpdateTail = update.then(
+      () => undefined,
+      () => undefined,
     );
+    await update;
   }
 
   async refreshLiveBlocks(): Promise<void> {
@@ -97,13 +135,14 @@ export default class TabbedPlugin extends Plugin {
   }
 
   private openTabEditor(block: TabsBlock, index: number): void {
-    const locator = block.locator;
+    const authority = block.captureMutationAuthority();
     const tab = block.document.tabs[index];
-    if (locator === null || tab === undefined) {
+    if (authority === null || tab === undefined) {
       return;
     }
+    this.editorBlock = block;
     this.getEditorModal().openFor({
-      locator,
+      authority,
       index,
       title: tab.title,
       content: tab.content,
@@ -114,5 +153,13 @@ export default class TabbedPlugin extends Plugin {
   private getEditorModal(): TabEditorModal {
     this.editorModal ??= new TabEditorModal(this.app, () => this.settings);
     return this.editorModal;
+  }
+
+  private isCurrentSettingsUpdate(revision: number, generation: number): boolean {
+    return (
+      !this.disposed &&
+      generation === this.lifecycleGeneration &&
+      revision === this.settingsUpdateRevision
+    );
   }
 }
