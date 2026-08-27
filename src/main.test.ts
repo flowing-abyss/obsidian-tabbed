@@ -220,7 +220,7 @@ describe('TabbedPlugin', () => {
       id: 'tabbed',
       name: 'Tabbed',
       version: '0.1.0',
-      minAppVersion: '1.13.1',
+      minAppVersion: '1.13.7',
       author: 'flowing-abyss',
       authorUrl: 'https://github.com/flowing-abyss',
       fundingUrl: 'https://boosty.to/flowing-abyss/donate',
