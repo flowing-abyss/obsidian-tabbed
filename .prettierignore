@@ -4,6 +4,10 @@ node_modules/
 main.js
 pnpm-lock.yaml
 
+# Local development artifacts — intentionally untracked and not formatter input.
+/docs/superpowers/
+/dev-vault-tabs/
+
 # Vendored skill library — not ours to reformat.
 .ai/skills/
 
