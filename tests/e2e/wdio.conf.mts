@@ -10,9 +10,8 @@ const cacheDir = path.resolve(repoRoot, '.obsidian-cache');
 // against; an empty "hostile" or "migration-v1" vault today would test nothing.
 const vault = path.resolve(repoRoot, 'tests', 'vaults', 'minimal');
 
-// Public and default runs use the latest stable Obsidian app and installer.
-// Minimum-version or beta compatibility runs are explicit credentialed overrides,
-// e.g. OBSIDIAN_VERSIONS="1.8.0/1.8.0" pnpm run test:e2e.
+// Default runs follow the latest stable Obsidian app and installer. Set
+// OBSIDIAN_VERSIONS to target a specific version.
 const desktopVersions = await parseObsidianVersions(env['OBSIDIAN_VERSIONS'] ?? 'latest/latest', {
   cacheDir,
 });

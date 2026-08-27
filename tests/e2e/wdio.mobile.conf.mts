@@ -13,8 +13,8 @@ import { parseObsidianVersions } from 'wdio-obsidian-service';
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 const cacheDir = path.resolve(repoRoot, '.obsidian-cache');
 const vault = path.resolve(repoRoot, 'tests', 'vaults', 'minimal');
-// Public and default runs use the latest stable Android build. Minimum-version or
-// beta compatibility runs must be explicit credentialed operator overrides.
+// Default runs follow the latest stable Android build. Set
+// OBSIDIAN_MOBILE_VERSIONS or OBSIDIAN_VERSIONS to target a specific version.
 const versionsSpec = env['OBSIDIAN_MOBILE_VERSIONS'] ?? env['OBSIDIAN_VERSIONS'] ?? 'latest/latest';
 const versions = await parseObsidianVersions(versionsSpec, { cacheDir });
 
