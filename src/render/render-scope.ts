@@ -85,13 +85,9 @@ export class RenderScope extends Component {
 
   override removeChild<T extends Component>(component: T): T {
     const owned = this.ownedChildren.get(component);
-    if (owned === undefined) {
-      cleanup(() => {
-        component.unload();
-      });
-    } else {
-      super.removeChild(owned);
-    }
+    if (owned === undefined) return component;
+    this.ownedChildren.delete(component);
+    super.removeChild(owned);
     return component;
   }
 

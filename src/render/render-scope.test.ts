@@ -30,6 +30,56 @@ class ThrowingUnloadChild extends CleanupChild {
 }
 
 describe('RenderScope', () => {
+  it('restores ownership when a child is removed and re-added before the first load', () => {
+    const scope = new RenderScope();
+    const child = new CleanupChild();
+    scope.addChild(child);
+    expect(scope.removeChild(child)).toBe(child);
+    expect(scope.addChild(child)).toBe(child);
+
+    scope.load();
+    expect(child.loads).toBe(1);
+    scope.close();
+    expect(child.unloads).toBe(1);
+    scope.close();
+    expect(scope.removeChild(child)).toBe(child);
+    expect(child.unloads).toBe(1);
+  });
+
+  it('releases an unloaded child so close leaves no ownership that can block late disposal', () => {
+    const scope = new RenderScope();
+    const child = new CleanupChild();
+    scope.addChild(child);
+    scope.removeChild(child);
+
+    scope.close();
+    expect(child.loads).toBe(0);
+    expect(child.unloads).toBe(0);
+    // A stale explicit ownership entry would incorrectly deduplicate this late child.
+    expect(scope.addChild(child)).toBe(child);
+    expect(child.loads).toBe(1);
+    expect(child.unloads).toBe(1);
+  });
+
+  it('does not unload a transferred child when its former owner removes it again', () => {
+    const former = new RenderScope();
+    const current = new RenderScope();
+    const child = new CleanupChild();
+    former.load();
+    current.load();
+    former.addChild(child);
+    former.removeChild(child);
+    current.addChild(child);
+    expect(child.loads).toBe(2);
+    expect(child.unloads).toBe(1);
+
+    expect(former.removeChild(child)).toBe(child);
+    former.close();
+    expect(child.unloads).toBe(1);
+    current.close();
+    expect(child.unloads).toBe(2);
+  });
+
   it('owns rejected cleanup promises while synchronous sibling cleanup still completes', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const scope = new RenderScope();
