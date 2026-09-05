@@ -11,6 +11,7 @@ let nextInstanceId = 0;
 
 interface RenderOperation {
   readonly scope: RenderScope;
+  readonly columnEl: HTMLElement;
   readonly target: HTMLElement;
   readonly markdown: string;
   readonly index: number;
@@ -73,6 +74,7 @@ export class ColumnsBlock extends MarkdownRenderChild {
         const scope = this.addChild(new RenderScope());
         this.renderOperation({
           scope,
+          columnEl,
           target: title,
           markdown: column.title,
           index,
@@ -87,6 +89,7 @@ export class ColumnsBlock extends MarkdownRenderChild {
       );
       this.renderOperation({
         scope: body,
+        columnEl,
         target,
         markdown: column.content,
         index,
@@ -118,13 +121,13 @@ export class ColumnsBlock extends MarkdownRenderChild {
     const render = async (): Promise<void> => {
       await operation.render();
       if (generation !== this.generation) {
-        this.removeChild(operation.scope);
+        this.closeScope(operation.scope);
       }
     };
     render().catch((error: unknown) => {
       const current = generation === this.generation && !operation.scope.isClosed;
-      this.removeChild(operation.scope);
-      if (current) {
+      this.closeScope(operation.scope);
+      if (current && generation === this.generation) {
         this.replaceFailedTarget(operation);
         logError(`Could not render column ${operation.kind}`, {
           path: this.context.sourcePath,
@@ -135,19 +138,27 @@ export class ColumnsBlock extends MarkdownRenderChild {
     });
   }
 
-  private replaceFailedTarget({ target, kind, markdown }: RenderOperation): void {
-    const parent = target.parentElement;
-    const nextSibling = target.nextSibling;
+  private closeScope(scope: RenderScope): void {
+    try {
+      this.removeChild(scope);
+    } catch {
+      // Third-party cleanup must not interrupt fallback or replace the render diagnostic.
+      // RenderScope marks itself closed before invoking registered cleanup.
+    }
+  }
+
+  private replaceFailedTarget({ columnEl, target, kind, markdown, index }: RenderOperation): void {
     target.remove();
     const replacement = createDiv({
       cls: kind === 'title' ? 'tabbed-columns__title' : 'tabbed-columns__content',
     });
     if (kind === 'title') {
-      replacement.id = target.id;
+      replacement.id = `tabbed-columns-${this.instanceId}-title-${index}`;
       replacement.setText(markdown);
+      columnEl.prepend(replacement);
     } else {
       replacement.createEl('pre', { cls: 'tabbed-columns__fallback', text: markdown });
+      columnEl.append(replacement);
     }
-    parent?.insertBefore(replacement, nextSibling);
   }
 }

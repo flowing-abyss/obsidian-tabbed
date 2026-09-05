@@ -145,6 +145,107 @@ function deferred() {
 }
 
 describe('ColumnsBlock failure isolation', () => {
+  it.each([
+    ['title', 'remove'],
+    ['body', 'remove'],
+    ['title', 'throw'],
+    ['body', 'throw'],
+  ] as const)('recovers a failed %s when registered cleanup will %s', async (kind, cleanup) => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const notice = vi.spyOn(Notice.prototype, 'constructor__');
+    const pending = deferred();
+    const original = '<i>Failed source</i>';
+    const cleanupCalled = vi.fn();
+    let originalTarget!: HTMLElement;
+    const renderer = vi.fn<RenderMarkdown>(async (...[, markdown, target, , scope]) => {
+      if (markdown === original) {
+        originalTarget = target;
+        target.setText('Partial result');
+        scope.register(() => {
+          cleanupCalled();
+          if (cleanup === 'throw') throw new Error('cleanup failed');
+          target.remove();
+        });
+        await pending.promise;
+      } else target.setText(markdown);
+    });
+    const source = kind === 'title' ? `column: ${original}\nbody` : `column: Title\n${original}`;
+    const { block, container } = createBlock(source, renderer);
+
+    pending.reject(new Error('render failed'));
+    // Let the runtime report any unhandled rejection to Vitest before assertions.
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 0);
+    });
+
+    const column = element(container, '.tabbed-columns__column');
+    const replacement = element(
+      column,
+      kind === 'title' ? '.tabbed-columns__title' : '.tabbed-columns__content',
+    );
+    expect(cleanupCalled).toHaveBeenCalledOnce();
+    expect(replacement).not.toBe(originalTarget);
+    expect(originalTarget.isConnected).toBe(false);
+    expect(replacement.textContent).toBe(original);
+    expect(replacement.querySelector('i')).toBeNull();
+    expect(element(column, '.tabbed-columns__title').id).toBe(
+      column.getAttribute('aria-labelledby'),
+    );
+    if (kind === 'body')
+      expect(element(replacement, '.tabbed-columns__fallback').textContent).toBe(original);
+    expect(Array.from(column.children).map((child) => child.className)).toEqual([
+      'tabbed-columns__title',
+      'tabbed-columns__content',
+    ]);
+    expect(log).toHaveBeenCalledExactlyOnceWith(`[tabbed] Could not render column ${kind}`, {
+      path: 'Note.md',
+      index: 0,
+      cause: 'render failed',
+    });
+    expect(notice).not.toHaveBeenCalled();
+    block.unload();
+  });
+
+  it.each(['title', 'body'] as const)(
+    'keeps %s recovery silent if cleanup synchronously unloads the block',
+    async (kind) => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const notice = vi.spyOn(Notice.prototype, 'constructor__');
+      const pending = deferred();
+      const original = 'Failed source';
+      const renderer = vi.fn<RenderMarkdown>(async (...[, markdown, target, , scope]) => {
+        target.setText(markdown);
+        if (markdown === original) {
+          scope.register(() => {
+            unloadBlock();
+            throw new Error('cleanup failed after unload');
+          });
+          await pending.promise;
+        }
+      });
+      const source = kind === 'title' ? `column: ${original}\nbody` : `column: Title\n${original}`;
+      const { block, container } = createBlock(source, renderer);
+      const root = element(container, '.tabbed-columns');
+      const originalChildren = Array.from(element(root, '.tabbed-columns__column').children);
+      const unloadBlock = () => {
+        block.unload();
+      };
+
+      pending.reject(new Error('render failed'));
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 0);
+      });
+
+      expect(container.childElementCount).toBe(0);
+      expect(root.querySelector('.tabbed-columns__fallback')).toBeNull();
+      expect(Array.from(element(root, '.tabbed-columns__column').children)).toEqual(
+        originalChildren,
+      );
+      expect(log).not.toHaveBeenCalled();
+      expect(notice).not.toHaveBeenCalled();
+    },
+  );
+
   it('recovers parser exceptions with the complete literal source and one diagnostic', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const notice = vi.spyOn(Notice.prototype, 'constructor__');
