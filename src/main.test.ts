@@ -56,6 +56,7 @@ import { TabEditorModal, type TabEditorRequest } from './editor/tab-editor-modal
 import { DragController } from './interactions/drag-controller.js';
 import TabbedPlugin from './main.js';
 import { ColumnsBlock } from './render/columns-block.js';
+import { TabBody } from './render/tab-body.js';
 import { TabsBlock } from './render/tabs-block.js';
 import { TabbedSettingsTab } from './settings-tab.js';
 import { DEFAULT_SETTINGS, type TabbedSettings } from './settings.js';
@@ -614,6 +615,27 @@ describe('TabbedPlugin', () => {
     expect(notice).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();
     rendered.block.unload();
+  });
+
+  it('ignores a nested block unloaded by its parent during a refresh snapshot', async () => {
+    const harness = await loadPlugin();
+    const render = vi.spyOn(TabBody.prototype, 'render');
+    const parent = await renderBlock(harness);
+    const parentBody = required(render.mock.contexts[0], 'Expected parent body');
+    if (!(parentBody instanceof TabBody)) throw new Error('Expected a TabBody render context');
+    const nested = await renderBlock(harness);
+    parentBody.addChild(nested.block);
+    const refreshNested = vi.spyOn(nested.block, 'refreshActiveBody');
+    const registerNested = vi.spyOn(nested.block, 'addChild');
+    render.mockClear();
+
+    await harness.plugin.refreshLiveBlocks();
+
+    expect(refreshNested).toHaveBeenCalledOnce();
+    expect(registerNested.mock.calls).toHaveLength(0);
+    expect(nested.container.querySelector('.tabbed')).toBeNull();
+    expect(render).toHaveBeenCalledOnce();
+    parent.block.unload();
   });
 
   it('executes registered command callbacks and refreshes only blocks that remain live', async () => {

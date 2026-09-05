@@ -79,9 +79,11 @@ export class TabsBlock extends MarkdownRenderChild {
   private tabs: HTMLElement[] = [];
   private titleChildren: RenderScope[] = [];
   private readonly bodyCache = new Map<number, CachedBodyEntry>();
+  private readonly disposingBodies = new Set<CachedBodyEntry>();
   private readonly bodyCompletions = new Map<CachedBodyEntry, DeferredCompletion>();
   private readonly startedBodies = new Set<CachedBodyEntry>();
-  private bodyCacheEpoch = 0;
+  private bodyEpoch = 0;
+  private isLive = false;
   private mutationInteractions: Component | null = null;
   private locatorGeneration = 0;
   private parserFailed = false;
@@ -152,6 +154,7 @@ export class TabsBlock extends MarkdownRenderChild {
     const authority: SourceMutationAuthority = {
       locator,
       isActive: () =>
+        this.isLive &&
         generation === this.locatorGeneration &&
         this.locatorValue === locator &&
         this.ownsSourceLocator(locator),
@@ -160,6 +163,7 @@ export class TabsBlock extends MarkdownRenderChild {
   }
 
   override onload(): void {
+    this.isLive = true;
     const section = this.context.getSectionInfo(this.containerEl);
     this.initializeSection(section);
     this.locatorValue = this.parserFailed ? null : this.createLocator(section, this.settings);
@@ -174,10 +178,18 @@ export class TabsBlock extends MarkdownRenderChild {
     this.startActivation(this.selection);
   }
 
+  override unload(): void {
+    if (!this.isLive) return;
+    this.isLive = false;
+    this.clearBodies();
+    super.unload();
+  }
+
   override onunload(): void {
+    this.isLive = false;
     this.locatorGeneration += 1;
     this.locatorValue = null;
-    this.clearBodies(false);
+    this.clearBodies();
     this.mutationInteractions = null;
     this.titleChildren = [];
     this.tabs = [];
@@ -187,6 +199,7 @@ export class TabsBlock extends MarkdownRenderChild {
   }
 
   async activate(index: number): Promise<void> {
+    if (!this.isLive) return;
     const selected = this.clampIndex(index);
     this.selection = selected;
     this.rememberSelection();
@@ -200,13 +213,17 @@ export class TabsBlock extends MarkdownRenderChild {
     await entry.renderPromise;
   }
 
-  refreshActiveBody(): Promise<void> {
+  async refreshActiveBody(): Promise<void> {
+    if (!this.isLive) return;
+    const epoch = this.bodyEpoch + 1;
     this.clearBodies();
+    if (!this.isCurrentBodyEpoch(epoch)) return;
     this.arrangeShell();
-    return this.activate(this.selection);
+    await this.activate(this.selection);
   }
 
   async applySettings(settings: TabbedSettings): Promise<void> {
+    if (!this.isLive) return;
     const syntaxChanged = this.syntaxSettingsChanged(settings);
     this.settings = { ...settings };
     this.updateHostMarker();
@@ -217,6 +234,9 @@ export class TabsBlock extends MarkdownRenderChild {
     }
 
     this.parsedDocument = this.parseDocument(settings);
+    const epoch = this.bodyEpoch + 1;
+    this.clearBodies();
+    if (!this.isCurrentBodyEpoch(epoch)) return;
     this.locatorGeneration += 1;
     this.locatorValue = this.parserFailed
       ? null
@@ -224,7 +244,7 @@ export class TabsBlock extends MarkdownRenderChild {
     this.reconcileMutationInteractions();
     this.selection = this.clampIndex(this.selection);
     this.disposeTitles();
-    this.clearBodies();
+    if (!this.isCurrentBodyEpoch(epoch)) return;
     this.renderTitlesAndAction();
     this.arrangeShell();
     this.applyShell();
@@ -507,7 +527,7 @@ export class TabsBlock extends MarkdownRenderChild {
     const panelEl = createDiv({
       cls: 'tabbed__panel',
       attr: {
-        id: `tabbed-${this.instanceId}-panel-${this.bodyCacheEpoch}-${index}`,
+        id: `tabbed-${this.instanceId}-panel-${this.bodyEpoch}-${index}`,
         role: 'tabpanel',
         'data-tab-index': String(index),
       },
@@ -534,12 +554,14 @@ export class TabsBlock extends MarkdownRenderChild {
     if (completion === undefined) {
       return;
     }
+    const epoch = this.bodyEpoch;
+    const isCurrent = (): boolean =>
+      this.isCurrentBodyEpoch(epoch) && this.bodyCache.get(entry.index) === entry;
     const handleFailure = (error: unknown): void => {
-      if (this.bodyCache.get(entry.index) === entry) {
+      this.disposeEntry(entry);
+      if (isCurrent()) {
         entry.panelEl.empty();
-        if (this.selection === entry.index) {
-          logError('Could not render tab body', this.errorContext(entry.index, error));
-        }
+        logError('Could not render tab body', this.errorContext(entry.index, error));
       }
       completion.resolve();
     };
@@ -552,7 +574,7 @@ export class TabsBlock extends MarkdownRenderChild {
     }
     const renderPromise = Promise.resolve(renderResult);
     void renderPromise.then(() => {
-      if (this.bodyCache.get(entry.index) === entry) {
+      if (isCurrent() && this.selection === entry.index) {
         this.reconcileLocatorAfterRender();
       }
       completion.resolve();
@@ -576,18 +598,34 @@ export class TabsBlock extends MarkdownRenderChild {
     this.updateTabState(entry.panelEl);
   }
 
-  private clearBodies(unloadChildren = true): void {
-    this.bodyCacheEpoch += 1;
-    for (const entry of this.bodyCache.values()) {
-      entry.panelEl.remove();
-      if (unloadChildren && entry.body !== null) {
-        this.removeChild(entry.body);
-        entry.body = null;
-      }
-    }
+  private isCurrentBodyEpoch(epoch: number): boolean {
+    return this.isLive && this.bodyEpoch === epoch;
+  }
+
+  private clearBodies(): void {
+    this.bodyEpoch += 1;
+    for (const entry of this.bodyCache.values()) this.disposingBodies.add(entry);
     this.bodyCache.clear();
     this.bodyCompletions.clear();
     this.startedBodies.clear();
+    // A cleanup callback may unload the block before this loop reaches its next body.
+    // Reentrant clearing must release those pending children before native unload runs.
+    for (const entry of this.disposingBodies) {
+      this.disposingBodies.delete(entry);
+      this.disposeEntry(entry);
+      entry.panelEl.remove();
+    }
+  }
+
+  private disposeEntry(entry: CachedBodyEntry): void {
+    const body = entry.body;
+    entry.body = null;
+    if (body === null) return;
+    try {
+      this.removeChild(body);
+    } catch (error) {
+      logError('Could not clean up rendered Markdown', this.errorContext(entry.index, error));
+    }
   }
 
   private updateTabState(panel: HTMLElement | null): void {

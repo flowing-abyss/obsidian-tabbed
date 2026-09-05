@@ -354,6 +354,251 @@ describe('TabsBlock initial rendering', () => {
 });
 
 describe('TabsBlock body lifecycle', () => {
+  it('ignores activation, refresh, and settings after unload', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { block, container } = createBlock(renderer);
+    block.unload();
+
+    await block.activate(1);
+    await block.refreshActiveBody();
+    await block.applySettings({ ...DEFAULT_SETTINGS, separator: ':: ' });
+    await block.applySettings(DEFAULT_SETTINGS);
+
+    expect(container.querySelector('.tabbed')).toBeNull();
+    expect(renderer.mock.calls.filter(([, , el]) => el.matches('.tabbed__panel'))).toHaveLength(1);
+    expect(block.locator).toBeNull();
+  });
+
+  it.each(['refresh', 'syntax', 'unload'] as const)(
+    'disposes pending scopes once and ignores stale completion after %s',
+    async (invalidation) => {
+      const pending = [deferred(), deferred()] as const;
+      const scopes: Component[] = [];
+      const children: CleanupChild[] = [];
+      const cleanups: Array<ReturnType<typeof vi.fn>> = [];
+      const panels: HTMLElement[] = [];
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const renderer: RenderMarkdown = (...[_app, markdown, element, _path, scope]) => {
+        if (!element.matches('.tabbed__panel')) return Promise.resolve();
+        const call = panels.length;
+        panels.push(element);
+        scopes.push(scope);
+        children.push(scope.addChild(new CleanupChild()));
+        const cleanup = vi.fn();
+        cleanups.push(cleanup);
+        scope.register(cleanup);
+        element.setText(markdown);
+        return pending[call]?.promise ?? Promise.resolve();
+      };
+      const { block, container, setMode } = await sourceBlock(renderer, { mode: 'preview' });
+      const oldActivation = block.activate(1);
+      const unloads = scopes.map((scope) => vi.spyOn(scope, 'unload'));
+      if (invalidation === 'refresh') await block.refreshActiveBody();
+      else if (invalidation === 'syntax') {
+        await block.applySettings({ ...DEFAULT_SETTINGS, defaultTitle: 'Changed' });
+      } else block.unload();
+
+      setMode('source');
+      pending[0].resolve();
+      pending[1].reject(new Error('stale body failure'));
+      await oldActivation;
+      await settle();
+
+      expect(panels).toHaveLength(invalidation === 'unload' ? 2 : 3);
+      expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(
+        invalidation === 'unload' ? 0 : 1,
+      );
+      expect(panels[0]?.isConnected).toBe(false);
+      expect(panels[1]?.isConnected).toBe(false);
+      expect(block.locator).toBeNull();
+      expect(log).not.toHaveBeenCalled();
+      for (const unload of unloads) expect(unload).toHaveBeenCalledOnce();
+      for (const child of children.slice(0, 2)) expect(child.unloads).toBe(1);
+      for (const cleanup of cleanups.slice(0, 2)) expect(cleanup).toHaveBeenCalledOnce();
+      block.unload();
+    },
+  );
+
+  it('releases a current failure scope once and caches its empty panel without retry', async () => {
+    const failed = deferred();
+    const child = new CleanupChild();
+    const cleanup = vi.fn();
+    let failedScope!: Component;
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const renderer = vi.fn<RenderMarkdown>((...[_app, markdown, element, _path, scope]) => {
+      if (!element.matches('.tabbed__panel') || !markdown.startsWith('first'))
+        return Promise.resolve();
+      failedScope = scope;
+      scope.addChild(child);
+      scope.register(cleanup);
+      element.createDiv({ text: 'partial content' });
+      return failed.promise;
+    });
+    const { block, container } = createBlock(renderer);
+    const panel = container.querySelector('.tabbed__panel');
+    const unload = vi.spyOn(failedScope, 'unload');
+    failed.reject(new Error('partial failure'));
+    await block.activate(0);
+
+    expect(unload).toHaveBeenCalledOnce();
+    expect(child.unloads).toBe(1);
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(panel?.childElementCount).toBe(0);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[tabbed] Could not render tab body', {
+      path: 'Note.md',
+      index: 0,
+      cause: 'partial failure',
+    });
+    await block.activate(1);
+    await block.activate(0);
+    expect(container.querySelector('.tabbed__panel.is-active')).toBe(panel);
+    expect(renderer.mock.calls.filter(([, , el]) => el.matches('.tabbed__panel'))).toHaveLength(2);
+    block.unload();
+    expect(unload).toHaveBeenCalledOnce();
+  });
+
+  it.each(['unload', 'refresh'] as const)(
+    'rechecks ownership when failure cleanup triggers %s',
+    async (action) => {
+      const failed = deferred();
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const cleanup = vi.fn(async () => {
+        if (action === 'unload') block.unload();
+        else await block.refreshActiveBody();
+      });
+      let calls = 0;
+      let scope!: Component;
+      const renderer: RenderMarkdown = (...[_app, _markdown, element, _path, component]) => {
+        if (!element.matches('.tabbed__panel')) return Promise.resolve();
+        calls += 1;
+        element.setText(calls === 1 ? 'old' : 'replacement');
+        if (calls > 1) return Promise.resolve();
+        scope = component;
+        component.register(cleanup);
+        return failed.promise;
+      };
+      const { block, container } = createBlock(renderer);
+      const unload = vi.spyOn(scope, 'unload');
+      failed.reject(new Error('failure before cleanup'));
+      await block.activate(0);
+      await settle();
+
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(unload).toHaveBeenCalledOnce();
+      expect(log).not.toHaveBeenCalled();
+      expect(container.querySelector('.tabbed__panel')?.textContent ?? null).toBe(
+        action === 'unload' ? null : 'replacement',
+      );
+      expect(calls).toBe(action === 'unload' ? 1 : 2);
+      block.unload();
+    },
+  );
+
+  it.each(['refresh', 'syntax'] as const)(
+    'stops %s if body cleanup unloads the block',
+    async (action) => {
+      const renderer = vi.fn<RenderMarkdown>((...[_app, _markdown, element, _path, scope]) => {
+        if (element.matches('.tabbed__panel'))
+          scope.register(() => {
+            block.unload();
+          });
+        return Promise.resolve();
+      });
+      const { block, container } = createBlock(renderer);
+      const calls = renderer.mock.calls.length;
+
+      if (action === 'refresh') await block.refreshActiveBody();
+      else await block.applySettings({ ...DEFAULT_SETTINGS, defaultTitle: 'Changed' });
+
+      expect(container.querySelector('.tabbed')).toBeNull();
+      expect(renderer).toHaveBeenCalledTimes(calls);
+      expect(block.locator).toBeNull();
+    },
+  );
+
+  it('contains synchronous failure after reentrant unload without resurrecting DOM', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const renderer = vi.fn<RenderMarkdown>((_app, _markdown, element) => {
+      if (element.matches('.tabbed__panel')) {
+        block.unload();
+        throw new Error('sync after unload');
+      }
+      return Promise.resolve();
+    });
+    const { block, container } = createBlock(renderer, twoTabs, { load: false });
+    block.load();
+    await block.activate(1);
+
+    expect(container.querySelector('.tabbed')).toBeNull();
+    expect(log).not.toHaveBeenCalled();
+    expect(renderer.mock.calls.filter(([, , el]) => el.matches('.tabbed__panel'))).toHaveLength(1);
+  });
+
+  it('preserves replacement cache entries created by reentrant refresh cleanup', async () => {
+    let calls = 0;
+    const renderer: RenderMarkdown = (...[_app, _markdown, element, _path, scope]) => {
+      if (!element.matches('.tabbed__panel')) return Promise.resolve();
+      calls += 1;
+      if (calls === 1) scope.register(() => block.refreshActiveBody());
+      element.setText(`body ${calls}`);
+      return Promise.resolve();
+    };
+    const { block, container } = createBlock(renderer);
+    await block.activate(1);
+
+    await block.refreshActiveBody();
+
+    expect(calls).toBe(3);
+    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(1);
+    expect(container.querySelector('.tabbed__panel.is-active')?.textContent).toBe('body 3');
+    await block.activate(1);
+    expect(calls).toBe(3);
+    block.unload();
+  });
+
+  it('closes lifecycle before unload callbacks can activate another body', async () => {
+    let calls = 0;
+    let scope!: Component;
+    const renderer: RenderMarkdown = (...[_app, _markdown, element, _path, component]) => {
+      if (!element.matches('.tabbed__panel')) return Promise.resolve();
+      calls += 1;
+      scope = component;
+      component.register(() => block.activate(1));
+      return Promise.resolve();
+    };
+    const { block, container } = createBlock(renderer);
+    const unload = vi.spyOn(scope, 'unload');
+
+    block.unload();
+    await settle();
+
+    expect(calls).toBe(1);
+    expect(unload).toHaveBeenCalledOnce();
+    expect(container.querySelector('.tabbed')).toBeNull();
+  });
+
+  it('unloads every cached scope once when refresh cleanup unloads the block', async () => {
+    const scopes: Component[] = [];
+    const renderer: RenderMarkdown = (...[_app, _markdown, element, _path, scope]) => {
+      if (!element.matches('.tabbed__panel')) return Promise.resolve();
+      scopes.push(scope);
+      if (scopes.length === 1)
+        scope.register(() => {
+          block.unload();
+        });
+      return Promise.resolve();
+    };
+    const { block, container } = createBlock(renderer);
+    await block.activate(1);
+    const unloads = scopes.map((scope) => vi.spyOn(scope, 'unload'));
+
+    await block.refreshActiveBody();
+
+    for (const unload of unloads) expect(unload).toHaveBeenCalledOnce();
+    expect(scopes).toHaveLength(2);
+    expect(container.querySelector('.tabbed')).toBeNull();
+  });
+
   it('renders each visited body once and preserves its live panel state', async () => {
     const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
     const { block, container } = createBlock(renderer);
@@ -443,7 +688,7 @@ describe('TabsBlock body lifecycle', () => {
     block.unload();
   });
 
-  it('catches a stale rejection without logging it or changing the current panel', async () => {
+  it('logs an inactive cached failure without changing the selected panel', async () => {
     const first = deferred();
     const second = deferred();
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -463,7 +708,11 @@ describe('TabsBlock body lifecycle', () => {
     first.reject(new Error('late A failure'));
     await settle();
 
-    expect(consoleError).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('[tabbed] Could not render tab body', {
+      path: 'Note.md',
+      index: 0,
+      cause: 'late A failure',
+    });
     expect(container.querySelector('.tabbed__panel.is-active')?.textContent).toBe('second body');
   });
 
