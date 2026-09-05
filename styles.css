@@ -113,8 +113,16 @@
   margin: 0;
 }
 
-.tabbed > [class~='tabbed__panel'] {
+.tabbed > [class~='tabbed__panels'] {
+  position: relative;
   flex: 1 1 auto;
+  min-width: 0;
+  max-height: var(--tabbed-content-max-height);
+  overflow: hidden;
+}
+
+.tabbed > [class~='tabbed__panel'],
+.tabbed > [class~='tabbed__panels'] > [class~='tabbed__panel'] {
   min-width: 0;
   max-height: var(--tabbed-content-max-height);
   padding: var(--tabbed-content-padding);

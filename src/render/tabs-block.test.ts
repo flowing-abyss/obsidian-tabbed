@@ -298,6 +298,26 @@ describe('TabsBlock initial rendering', () => {
     expect(calls.some(({ markdown }) => markdown === 'second body')).toBe(false);
     expect(container.querySelectorAll(':scope > .tabbed')).toHaveLength(1);
     expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(1);
+    const root = required(
+      container.querySelector<HTMLElement>(':scope > .tabbed'),
+      'Expected root',
+    );
+    const panels = required(
+      root.querySelector<HTMLElement>(':scope > .tabbed__panels'),
+      'Expected panel container',
+    );
+    const panel = required(
+      panels.querySelector<HTMLElement>(':scope > .tabbed__panel'),
+      'Expected active panel',
+    );
+
+    expect(Array.from(root.children).map((child) => child.className)).toStrictEqual([
+      'tabbed__list',
+      'tabbed__panels',
+    ]);
+    expect(panel.classList.contains('is-active')).toBe(true);
+    expect(panel.inert).toBe(false);
+    expect(panel.hasAttribute('aria-hidden')).toBe(false);
 
     block.unload();
   });
@@ -542,48 +562,66 @@ describe('TabsBlock body lifecycle', () => {
 
 describe('TabsBlock accessible layout', () => {
   it.each([
-    ['top', 'horizontal', ['tablist', 'tabpanel']],
-    ['bottom', 'horizontal', ['tabpanel', 'tablist']],
-    ['left', 'vertical', ['tablist', 'tabpanel']],
-    ['right', 'vertical', ['tabpanel', 'tablist']],
-  ] as const)('links the %s tab layout to its one direct panel', (position, orientation, order) => {
-    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
-    const { block, container } = createBlock(renderer, `${position}\n${twoTabs}`);
-    const root = required(
-      container.querySelector<HTMLElement>(':scope > .tabbed'),
-      'Expected a tabbed root',
-    );
-    const list = required(
-      root.querySelector<HTMLElement>(':scope > .tabbed__list'),
-      'Expected a tab list',
-    );
-    const panel = required(
-      root.querySelector<HTMLElement>(':scope > .tabbed__panel'),
-      'Expected a tab panel',
-    );
-    const tabs = block.tabElements;
-    const firstTab = required(tabs[0], 'Expected a first tab');
-    const secondTab = required(tabs[1], 'Expected a second tab');
+    ['top', 'horizontal', ['tabbed__list', 'tabbed__panels']],
+    ['bottom', 'horizontal', ['tabbed__panels', 'tabbed__list']],
+    ['left', 'vertical', ['tabbed__list', 'tabbed__panels']],
+    ['right', 'vertical', ['tabbed__panels', 'tabbed__list']],
+  ] as const)(
+    'links the %s tab layout to its stable panel container',
+    async (position, orientation, order) => {
+      const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+      const { block, container } = createBlock(renderer, `${position}\n${twoTabs}`);
+      const root = required(
+        container.querySelector<HTMLElement>(':scope > .tabbed'),
+        'Expected a tabbed root',
+      );
+      const list = required(
+        root.querySelector<HTMLElement>(':scope > .tabbed__list'),
+        'Expected a tab list',
+      );
+      const panels = required(
+        root.querySelector<HTMLElement>(':scope > .tabbed__panels'),
+        'Expected a panel container',
+      );
+      const panel = required(
+        panels.querySelector<HTMLElement>(':scope > .tabbed__panel'),
+        'Expected a tab panel',
+      );
+      const tabs = block.tabElements;
+      const firstTab = required(tabs[0], 'Expected a first tab');
+      const secondTab = required(tabs[1], 'Expected a second tab');
 
-    expect(root.classList.contains(`tabbed--${position}`)).toBe(true);
-    expect(root.classList.contains('tabbed--one')).toBe(true);
-    expect(root.classList.contains('tabbed--border-hover')).toBe(true);
-    expect(list.getAttribute('role')).toBe('tablist');
-    expect(list.getAttribute('aria-orientation')).toBe(orientation);
-    expect(Array.from(root.children).map((child) => child.getAttribute('role'))).toStrictEqual(
-      order,
-    );
-    expect(root.querySelectorAll(':scope > .tabbed__panel')).toHaveLength(1);
-    expect(tabs.map((tab) => tab.getAttribute('role'))).toStrictEqual(['tab', 'tab']);
-    expect(tabs.map((tab) => tab.getAttribute('aria-selected'))).toStrictEqual(['true', 'false']);
-    expect(tabs.map((tab) => tab.getAttribute('tabindex'))).toStrictEqual(['0', '-1']);
-    expect(firstTab.getAttribute('aria-controls')).toBe(panel.id);
-    expect(secondTab.hasAttribute('aria-controls')).toBe(false);
-    expect(panel.getAttribute('aria-labelledby')).toBe(firstTab.id);
-    expect(new Set([firstTab.id, secondTab.id, panel.id]).size).toBe(3);
+      expect(root.classList.contains(`tabbed--${position}`)).toBe(true);
+      expect(root.classList.contains('tabbed--one')).toBe(true);
+      expect(root.classList.contains('tabbed--border-hover')).toBe(true);
+      expect(list.getAttribute('role')).toBe('tablist');
+      expect(list.getAttribute('aria-orientation')).toBe(orientation);
+      expect(Array.from(root.children).map((child) => child.className)).toStrictEqual(order);
+      expect(root.querySelectorAll(':scope > .tabbed__panel')).toHaveLength(0);
+      expect(panels.querySelectorAll(':scope > .tabbed__panel')).toHaveLength(1);
+      expect(tabs.map((tab) => tab.getAttribute('role'))).toStrictEqual(['tab', 'tab']);
+      expect(tabs.map((tab) => tab.getAttribute('aria-selected'))).toStrictEqual(['true', 'false']);
+      expect(tabs.map((tab) => tab.getAttribute('tabindex'))).toStrictEqual(['0', '-1']);
+      expect(firstTab.getAttribute('aria-controls')).toBe(panel.id);
+      expect(secondTab.hasAttribute('aria-controls')).toBe(false);
+      expect(panel.getAttribute('aria-labelledby')).toBe(firstTab.id);
+      expect(new Set([firstTab.id, secondTab.id, panel.id]).size).toBe(3);
 
-    block.unload();
-  });
+      await block.applySettings({
+        ...DEFAULT_SETTINGS,
+        border: 'always',
+        borderColor: '#abc',
+        limitTitleWidth: true,
+        contentPadding: '2em',
+        contentMaxHeight: '40vh',
+      });
+
+      expect(panels.querySelector(':scope > .tabbed__panel')).toBe(panel);
+      expect(panel.parentElement).toBe(panels);
+
+      block.unload();
+    },
+  );
 
   it('uses IDs that remain unique across block instances', () => {
     const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);

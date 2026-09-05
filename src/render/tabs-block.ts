@@ -45,6 +45,7 @@ export class TabsBlock extends MarkdownRenderChild {
   private readonly parser: (source: string, settings: TabbedSettings) => ParsedTabsDocument;
   private readonly rootEl: HTMLElement;
   private readonly listEl: HTMLElement;
+  private readonly panelsEl: HTMLElement;
   private readonly hostWrapperEl: HTMLElement | null;
   private readonly selectionMemory: SelectionMemory;
   private readonly host: TabsBlockHost;
@@ -99,6 +100,7 @@ export class TabsBlock extends MarkdownRenderChild {
     this.parsedDocument = this.parseDocument(settings);
     this.rootEl = containerEl.createDiv({ cls: 'tabbed' });
     this.listEl = this.rootEl.createDiv({ cls: 'tabbed__list', attr: { role: 'tablist' } });
+    this.panelsEl = this.rootEl.createDiv({ cls: 'tabbed__panels' });
     this.hostWrapperEl =
       containerEl.closest<HTMLElement>('.block-language-tabs') ?? containerEl.parentElement;
   }
@@ -145,6 +147,7 @@ export class TabsBlock extends MarkdownRenderChild {
     this.updateHostMarker();
     this.host.register(this);
     this.renderTitlesAndAction();
+    this.arrangeShell();
     this.applyShell();
     this.startActivation(this.selection);
   }
@@ -182,19 +185,19 @@ export class TabsBlock extends MarkdownRenderChild {
     }
 
     const panel = createDiv({
-      cls: 'tabbed__panel',
+      cls: 'tabbed__panel is-active',
       attr: {
         id: `tabbed-${this.instanceId}-panel-${generation}`,
         role: 'tabpanel',
       },
     });
-    this.rootEl.append(panel);
+    panel.inert = false;
+    this.panelsEl.append(panel);
     const body = this.addChild(
       new TabBody(this.app, panel, tab.content, this.sourcePath, this.renderer),
     );
     this.body = body;
     this.updateTabState(panel);
-    this.applyShell();
 
     try {
       await body.render();
@@ -231,7 +234,14 @@ export class TabsBlock extends MarkdownRenderChild {
     this.reconcileMutationInteractions();
     this.selection = this.clampIndex(this.selection);
     this.disposeTitles();
+    if (this.body !== null) {
+      const oldBody = this.body;
+      this.body = null;
+      oldBody.panelEl.remove();
+      this.removeChild(oldBody);
+    }
     this.renderTitlesAndAction();
+    this.arrangeShell();
     this.applyShell();
     await this.activate(this.selection);
   }
@@ -533,19 +543,15 @@ export class TabsBlock extends MarkdownRenderChild {
         ? 'vertical'
         : 'horizontal',
     );
-    this.arrangeChildren();
   }
 
-  private arrangeChildren(): void {
-    const panel = this.body?.panelEl;
-    if (panel === undefined) {
-      this.rootEl.append(this.listEl);
-      return;
-    }
+  private arrangeShell(): void {
     const panelFirst =
       this.parsedDocument.options.position === 'bottom' ||
       this.parsedDocument.options.position === 'right';
-    this.rootEl.append(...(panelFirst ? [panel, this.listEl] : [this.listEl, panel]));
+    this.rootEl.append(
+      ...(panelFirst ? [this.panelsEl, this.listEl] : [this.listEl, this.panelsEl]),
+    );
   }
 
   private syntaxSettingsChanged(settings: TabbedSettings): boolean {
