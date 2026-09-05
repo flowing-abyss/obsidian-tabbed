@@ -208,12 +208,7 @@ export class ColumnsBlock extends MarkdownRenderChild {
   }
 
   private closeScope(scope: RenderScope): void {
-    try {
-      this.removeChild(scope);
-    } catch {
-      // Third-party cleanup must not interrupt fallback or replace the render diagnostic.
-      // RenderScope marks itself closed before invoking registered cleanup.
-    }
+    this.removeChild(scope);
   }
 
   private replaceFailedTarget({ columnEl, target, kind, markdown, index }: RenderOperation): void {

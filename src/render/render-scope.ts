@@ -1,7 +1,45 @@
 import { Component } from 'obsidian';
+import { formatError, logError } from '../diagnostics.js';
+
+function reportCleanupError(error: unknown): void {
+  logError('Could not clean up rendered Markdown', { cause: formatError(error) });
+}
+
+function cleanup(callback: () => unknown): void {
+  try {
+    Promise.resolve(callback()).catch(reportCleanupError);
+  } catch (error) {
+    reportCleanupError(error);
+  }
+}
+
+// Obsidian aborts its sibling cleanup loop when a child or callback throws.
+// These adapters keep each owned operation inside an independent boundary.
+class OwnedRenderChild extends Component {
+  constructor(
+    private readonly child: Component,
+    private readonly release: () => void,
+  ) {
+    super();
+  }
+
+  override onload(): void {
+    cleanup(() => {
+      this.child.load();
+    });
+  }
+
+  override onunload(): void {
+    this.release();
+    cleanup(() => {
+      this.child.unload();
+    });
+  }
+}
 
 export class RenderScope extends Component {
   private closed = false;
+  private readonly ownedChildren = new Map<Component, OwnedRenderChild>();
 
   get isClosed(): boolean {
     return this.closed;
@@ -12,11 +50,12 @@ export class RenderScope extends Component {
       return;
     }
     this.closed = true;
-    try {
+    cleanup(() => {
       super.load();
-    } finally {
+    });
+    cleanup(() => {
       super.unload();
-    }
+    });
   }
 
   override load(): void {
@@ -30,22 +69,39 @@ export class RenderScope extends Component {
   }
 
   override addChild<T extends Component>(component: T): T {
-    if (!this.closed) {
-      return super.addChild(component);
+    if (this.ownedChildren.has(component)) return component;
+    const owned = new OwnedRenderChild(component, () => {
+      this.ownedChildren.delete(component);
+    });
+    if (this.closed) {
+      owned.load();
+      owned.unload();
+    } else {
+      this.ownedChildren.set(component, owned);
+      super.addChild(owned);
     }
-    try {
-      component.load();
-    } finally {
-      component.unload();
+    return component;
+  }
+
+  override removeChild<T extends Component>(component: T): T {
+    const owned = this.ownedChildren.get(component);
+    if (owned === undefined) {
+      cleanup(() => {
+        component.unload();
+      });
+    } else {
+      super.removeChild(owned);
     }
     return component;
   }
 
   override register(callback: () => unknown): void {
     if (!this.closed) {
-      super.register(callback);
+      super.register(() => {
+        cleanup(callback);
+      });
       return;
     }
-    callback();
+    cleanup(callback);
   }
 }

@@ -84,6 +84,50 @@ function resizeHarness(available = true) {
 }
 
 describe('ColumnsBlock responsive lifecycle', () => {
+  it('disposes every scope, observer and frame when ordinary body cleanup throws', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = resizeHarness();
+    const pending = deferred();
+    const cleanups: Array<ReturnType<typeof vi.fn>> = [];
+    const renderer = vi.fn<RenderMarkdown>(async (...[, markdown, , , scope]) => {
+      const cleanup = vi.fn();
+      cleanups.push(cleanup);
+      scope.register(cleanup);
+      if (markdown === 'second')
+        scope.register(() => {
+          throw new Error('body cleanup failed');
+        });
+      await pending.promise;
+    });
+    const { block, container } = createBlock(
+      'stack\ncolumn: First\nfirst\ncolumn: Second\nsecond',
+      renderer,
+      undefined,
+      harness.environment,
+    );
+    harness.notify(100);
+    expect(harness.frames.size).toBe(1);
+
+    expect(() => {
+      block.unload();
+    }).not.toThrow();
+    expect(container.childElementCount).toBe(0);
+    expect(cleanups).toHaveLength(4);
+    expect(Reflect.get(block, 'generation')).toBe(1);
+    for (const cleanup of cleanups) expect(cleanup).toHaveBeenCalledOnce();
+    for (const call of renderer.mock.calls) expect((call[4] as RenderScope).isClosed).toBe(true);
+    expect(harness.observer.disconnect).toHaveBeenCalledOnce();
+    expect(harness.environment.cancelFrame).toHaveBeenCalledExactlyOnceWith(0);
+    expect(harness.frames.size).toBe(0);
+    pending.reject(new Error('late render failed'));
+    await settle();
+    await settle();
+    expect(container.childElementCount).toBe(0);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[tabbed] Could not clean up rendered Markdown', {
+      cause: 'body cleanup failed',
+    });
+  });
+
   const renderer = async () => {};
   const source = 'column:\nfirst\ncolumn:\nsecond';
 
@@ -360,11 +404,13 @@ describe('ColumnsBlock failure isolation', () => {
     const pending = deferred();
     const original = '<i>Failed source</i>';
     const cleanupCalled = vi.fn();
+    const siblingCleanup = vi.fn();
     let originalTarget!: HTMLElement;
     const renderer = vi.fn<RenderMarkdown>(async (...[, markdown, target, , scope]) => {
       if (markdown === original) {
         originalTarget = target;
         target.setText('Partial result');
+        scope.register(siblingCleanup);
         scope.register(() => {
           cleanupCalled();
           if (cleanup === 'throw') throw new Error('cleanup failed');
@@ -388,6 +434,7 @@ describe('ColumnsBlock failure isolation', () => {
       kind === 'title' ? '.tabbed-columns__title' : '.tabbed-columns__content',
     );
     expect(cleanupCalled).toHaveBeenCalledOnce();
+    expect(siblingCleanup).toHaveBeenCalledOnce();
     expect(replacement).not.toBe(originalTarget);
     expect(originalTarget.isConnected).toBe(false);
     expect(replacement.textContent).toBe(original);
@@ -401,11 +448,16 @@ describe('ColumnsBlock failure isolation', () => {
       'tabbed-columns__title',
       'tabbed-columns__content',
     ]);
-    expect(log).toHaveBeenCalledExactlyOnceWith(`[tabbed] Could not render column ${kind}`, {
+    expect(log).toHaveBeenCalledWith(`[tabbed] Could not render column ${kind}`, {
       path: 'Note.md',
       index: 0,
       cause: 'render failed',
     });
+    expect(log).toHaveBeenCalledTimes(cleanup === 'throw' ? 2 : 1);
+    if (cleanup === 'throw')
+      expect(log).toHaveBeenCalledWith('[tabbed] Could not clean up rendered Markdown', {
+        cause: 'cleanup failed',
+      });
     expect(notice).not.toHaveBeenCalled();
     block.unload();
   });
@@ -445,7 +497,9 @@ describe('ColumnsBlock failure isolation', () => {
       expect(Array.from(element(root, '.tabbed-columns__column').children)).toEqual(
         originalChildren,
       );
-      expect(log).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledExactlyOnceWith('[tabbed] Could not clean up rendered Markdown', {
+        cause: 'cleanup failed after unload',
+      });
       expect(notice).not.toHaveBeenCalled();
     },
   );

@@ -10,10 +10,50 @@ import { DEFAULT_SETTINGS, type TabbedSettings } from '../settings.js';
 import { SelectionMemory } from '../tabs/selection-memory.js';
 import type { ParsedTabsDocument } from '../tabs/tab-model.js';
 import { parseTabsSource } from '../tabs/tab-parser.js';
+import { ColumnsBlock } from './columns-block.js';
 import type { RenderMarkdown } from './markdown-renderer.js';
 import { TabsBlock, type TabsBlockHost } from './tabs-block.js';
 
 const twoTabs = ['tab: First', 'first body', 'tab: Second', 'second body'].join('\n');
+
+it('deactivates nested columns and sibling resources despite a throwing registered cleanup', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const cleanups: Array<ReturnType<typeof vi.fn>> = [];
+  let nestedRoot!: HTMLElement;
+  const nestedRenderer: RenderMarkdown = async (...[, markdown, target, , scope]) => {
+    target.setText(markdown);
+    const cleanup = vi.fn();
+    cleanups.push(cleanup);
+    scope.register(cleanup);
+    if (markdown === 'bad')
+      scope.register(() => {
+        throw new Error('nested cleanup failed');
+      });
+  };
+  const outerCleanup = vi.fn();
+  const renderer: RenderMarkdown = async (...[app, markdown, target, path, scope]) => {
+    if (markdown.trim() === 'first body') {
+      scope.register(outerCleanup);
+      const nested = scope.addChild(
+        new ColumnsBlock(app, target, 'column:\ngood\ncolumn:\nbad', context(path), nestedRenderer),
+      );
+      nestedRoot = nested.containerEl;
+    }
+  };
+  const { block, container } = createBlock(renderer);
+  await Promise.resolve();
+  expect(cleanups).toHaveLength(2);
+
+  await expect(block.activate(1)).resolves.toBeUndefined();
+  for (const cleanup of cleanups) expect(cleanup).toHaveBeenCalledOnce();
+  expect(outerCleanup).toHaveBeenCalledOnce();
+  expect(nestedRoot.querySelector('.tabbed-columns')).toBeNull();
+  expect(container.querySelector('.tabbed-columns')).toBeNull();
+  expect(log).toHaveBeenCalledExactlyOnceWith('[tabbed] Could not clean up rendered Markdown', {
+    cause: 'nested cleanup failed',
+  });
+  block.unload();
+});
 
 function context(sourcePath = 'Note.md'): MarkdownPostProcessorContext {
   return {
