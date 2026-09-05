@@ -1012,6 +1012,101 @@ describe('TabsBlock accessible layout', () => {
     block.unload();
   });
 
+  it('preserves a reentrant activation from the outgoing focused body blur', async () => {
+    const renderedBodies: string[] = [];
+    const renderer: RenderMarkdown = async (_app, markdown, element) => {
+      if (!element.matches('.tabbed__panel')) return;
+      renderedBodies.push(markdown.trim());
+      element.createEl('input');
+    };
+    const { block, container } = createBlock(renderer, threeTabs);
+    const input = required(container.querySelector('input'), 'Expected a focusable body input');
+    let reentrantActivation: Promise<void> | undefined;
+    input.addEventListener(
+      'blur',
+      () => {
+        reentrantActivation = block.activate(2);
+      },
+      { once: true },
+    );
+    input.focus();
+
+    await block.activate(1);
+    await reentrantActivation;
+
+    const activePanel = required(
+      container.querySelector<HTMLElement>('.tabbed__panel.is-active'),
+      'Expected the selected panel',
+    );
+    expect(block.selectedIndex).toBe(2);
+    expect(container.querySelectorAll('.tabbed__panel.is-active')).toHaveLength(1);
+    expect(activePanel.dataset['tabIndex']).toBe('2');
+    expect(activePanel.inert).toBe(false);
+    expect(activePanel.hasAttribute('aria-hidden')).toBe(false);
+    expect(block.tabElements.map((tab) => tab.getAttribute('aria-selected'))).toStrictEqual([
+      'false',
+      'false',
+      'true',
+    ]);
+    expect(block.tabElements.map((tab) => tab.getAttribute('aria-controls'))).toStrictEqual([
+      null,
+      null,
+      activePanel.id,
+    ]);
+    expect(activePanel.getAttribute('aria-labelledby')).toBe(block.tabElements[2]?.id);
+    for (const panel of Array.from(
+      container.querySelectorAll<HTMLElement>('.tabbed__panel:not(.is-active)'),
+    )) {
+      expect(panel.inert).toBe(true);
+      expect(panel.getAttribute('aria-hidden')).toBe('true');
+    }
+    expect(renderedBodies).toStrictEqual(['first body', 'third body']);
+    block.unload();
+  });
+
+  it('stops activation before changing panel state when outgoing focus blur unloads the block', async () => {
+    const renderedBodies: string[] = [];
+    const cleanup = vi.fn();
+    const renderer: RenderMarkdown = async (...[_app, markdown, element, _path, scope]) => {
+      if (!element.matches('.tabbed__panel')) return;
+      renderedBodies.push(markdown.trim());
+      element.createEl('input');
+      scope.register(cleanup);
+    };
+    const { block, container, blockHost } = createBlock(renderer);
+    const firstPanel = required(
+      container.querySelector<HTMLElement>('.tabbed__panel'),
+      'Expected panel 0',
+    );
+    const input = required(firstPanel.querySelector('input'), 'Expected a focusable body input');
+    const firstTab = required(block.tabElements[0], 'Expected tab 0');
+    input.addEventListener(
+      'blur',
+      () => {
+        block.unload();
+      },
+      { once: true },
+    );
+    input.focus();
+
+    const activation = block.activate(1);
+
+    expect(block.selectedIndex).toBe(1);
+    expect(container.querySelector('.tabbed')).toBeNull();
+    expect(firstPanel.isConnected).toBe(false);
+    expect(firstPanel.classList.contains('is-active')).toBe(true);
+    expect(firstPanel.inert).toBe(false);
+    expect(firstPanel.hasAttribute('aria-hidden')).toBe(false);
+    expect(firstTab.getAttribute('aria-controls')).toBe(firstPanel.id);
+    expect(renderedBodies).toStrictEqual(['first body']);
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(blockHost.unregister).toHaveBeenCalledExactlyOnceWith(block);
+    await activation;
+    await block.activate(0);
+    expect(container.querySelector('.tabbed')).toBeNull();
+    expect(renderedBodies).toStrictEqual(['first body']);
+  });
+
   it('moves horizontal focus without rendering and activates with keyboard or click', async () => {
     const bodyMarkdown: string[] = [];
     const renderer = vi.fn<RenderMarkdown>(async (_app, markdown, element) => {
@@ -1072,6 +1167,38 @@ describe('TabsBlock accessible layout', () => {
 });
 
 describe('TabsBlock source-mode controls', () => {
+  it('recovers source controls on a cache hit after the body finished in a detached view', async () => {
+    const body = deferred();
+    const renderedBodies: HTMLElement[] = [];
+    const renderer: RenderMarkdown = (_app, _markdown, element) => {
+      if (!element.matches('.tabbed__panel')) return Promise.resolve();
+      renderedBodies.push(element);
+      return body.promise;
+    };
+    const { block, container, wrapper, blockHost } = await sourceBlock(renderer, { load: false });
+    const viewContainer = required(wrapper.parentElement, 'Expected the owning view');
+    viewContainer.remove();
+    block.load();
+    const detachedActivation = block.activate(0);
+    body.resolve();
+    await detachedActivation;
+    expect(block.locator).toBeNull();
+    expect(container.querySelector('.tabbed__action')).toBeNull();
+
+    document.body.append(viewContainer);
+    await block.activate(0);
+
+    expect(renderedBodies).toHaveLength(1);
+    expect(container.querySelector('.tabbed__panel.is-active')).toBe(renderedBodies[0]);
+    expect(block.captureMutationAuthority()?.isActive()).toBe(true);
+    const action = required(container.querySelector('.tabbed__action'), 'Expected an add action');
+    expect(action.getAttribute('aria-label')).toBe('Add tab');
+    action.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(blockHost.addTab).toHaveBeenCalledExactlyOnceWith(block);
+    expect(blockHost.register).toHaveBeenCalledTimes(2);
+    block.unload();
+  });
+
   it('reconciles mutation controls after the first body render establishes view ownership', async () => {
     const body = deferred();
     const renderer = vi.fn<RenderMarkdown>((_app, _markdown, element) =>

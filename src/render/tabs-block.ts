@@ -83,6 +83,7 @@ export class TabsBlock extends MarkdownRenderChild {
   private readonly bodyCompletions = new Map<CachedBodyEntry, DeferredCompletion>();
   private readonly startedBodies = new Set<CachedBodyEntry>();
   private bodyEpoch = 0;
+  private activationGeneration = 0;
   private isLive = false;
   private mutationInteractions: Component | null = null;
   private locatorGeneration = 0;
@@ -200,6 +201,7 @@ export class TabsBlock extends MarkdownRenderChild {
 
   async activate(index: number): Promise<void> {
     if (!this.isLive) return;
+    const generation = ++this.activationGeneration;
     const selected = this.clampIndex(index);
     this.selection = selected;
     this.rememberSelection();
@@ -208,9 +210,12 @@ export class TabsBlock extends MarkdownRenderChild {
       this.updateTabState(null);
       return;
     }
-    this.setActiveBody(entry);
+    if (!this.setActiveBody(entry, generation)) return;
     this.startBodyRender(entry);
     await entry.renderPromise;
+    if (this.isCurrentActivation(entry, generation)) {
+      this.reconcileLocatorAfterRender();
+    }
   }
 
   async refreshActiveBody(): Promise<void> {
@@ -581,12 +586,17 @@ export class TabsBlock extends MarkdownRenderChild {
     }, handleFailure);
   }
 
-  private setActiveBody(entry: CachedBodyEntry): void {
+  private setActiveBody(entry: CachedBodyEntry, generation: number): boolean {
+    const focusedPanel = [...this.bodyCache.values()].find(
+      (candidate) => candidate !== entry && candidate.panelEl.contains(document.activeElement),
+    );
+    if (focusedPanel !== undefined) {
+      this.tabs[entry.index]?.focus();
+    }
+    // Focus can synchronously invoke processor blur handlers that activate or unload.
+    if (!this.isCurrentActivation(entry, generation)) return false;
     for (const candidate of this.bodyCache.values()) {
       const active = candidate === entry;
-      if (!active && candidate.panelEl.contains(document.activeElement)) {
-        this.tabs[entry.index]?.focus();
-      }
       candidate.panelEl.toggleClass('is-active', active);
       candidate.panelEl.inert = !active;
       if (active) {
@@ -596,6 +606,16 @@ export class TabsBlock extends MarkdownRenderChild {
       }
     }
     this.updateTabState(entry.panelEl);
+    return true;
+  }
+
+  private isCurrentActivation(entry: CachedBodyEntry, generation: number): boolean {
+    return (
+      this.isLive &&
+      this.activationGeneration === generation &&
+      this.selection === entry.index &&
+      this.bodyCache.get(entry.index) === entry
+    );
   }
 
   private isCurrentBodyEpoch(epoch: number): boolean {
