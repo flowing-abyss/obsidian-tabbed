@@ -55,6 +55,7 @@ vi.mock('./editor/tab-editor-component.js', async () => {
 import { TabEditorModal, type TabEditorRequest } from './editor/tab-editor-modal.js';
 import { DragController } from './interactions/drag-controller.js';
 import TabbedPlugin from './main.js';
+import { ColumnsBlock } from './render/columns-block.js';
 import { TabsBlock } from './render/tabs-block.js';
 import { TabbedSettingsTab } from './settings-tab.js';
 import { DEFAULT_SETTINGS, type TabbedSettings } from './settings.js';
@@ -66,6 +67,7 @@ const twoTabs = ['tab: First', 'first body', 'tab: Second', 'second body'].join(
 interface Harness {
   readonly app: ReturnType<typeof App.createConfigured__>;
   readonly plugin: TabbedPlugin;
+  readonly processors: Map<string, Harness['processor']>;
   readonly processor: (
     source: string,
     el: HTMLElement,
@@ -103,7 +105,10 @@ async function loadPlugin(saved: unknown = {}): Promise<Harness> {
   plugin.load();
   await settle();
 
-  const processor = registerProcessor.mock.calls[0]?.[1];
+  const processors = new Map(
+    registerProcessor.mock.calls.map(([language, callback]) => [language, callback]),
+  );
+  const processor = processors.get('tabs');
   if (processor === undefined) {
     throw new Error('Expected a registered tabs processor');
   }
@@ -111,6 +116,7 @@ async function loadPlugin(saved: unknown = {}): Promise<Harness> {
     app,
     plugin,
     processor,
+    processors,
     commands: addCommand.mock.calls.map(([command]) => command),
     settingTabs: addSettingTab.mock.calls.map(([tab]) => tab),
   };
@@ -230,8 +236,9 @@ describe('TabbedPlugin', () => {
     });
   });
 
-  it('normalizes saved data and registers only the tabs processor, two commands, and settings tab on load', async () => {
+  it('normalizes saved data and registers tabs and columns processors, two commands, and settings tab on load', async () => {
     const harness = await loadPlugin({ titlePosition: 'invalid', tabSize: 99, action: 'edit' });
+    expect([...harness.processors.keys()]).toEqual(['tabs', 'columns']);
 
     expect(harness.plugin.settings).toStrictEqual({
       ...DEFAULT_SETTINGS,
@@ -247,7 +254,10 @@ describe('TabbedPlugin', () => {
     expect(document.querySelector('.tabbed')).toBeNull();
   });
 
-  it('adds each processed block as a renderer-owned child', async () => {
+  it.each([
+    ['tabs', TabsBlock],
+    ['columns', ColumnsBlock],
+  ] as const)('adds each %s block as a renderer-owned child', async (language, blockType) => {
     const harness = await loadPlugin();
     const addChild = vi.fn<(child: MarkdownRenderChild) => void>();
     const context: MarkdownPostProcessorContext = {
@@ -259,10 +269,11 @@ describe('TabbedPlugin', () => {
     };
     const container = createDiv();
 
-    await harness.processor(twoTabs, container, context);
+    const processor = required(harness.processors.get(language), `Expected ${language} processor`);
+    await processor(language === 'tabs' ? twoTabs : 'column:\nbody', container, context);
 
     expect(addChild).toHaveBeenCalledTimes(1);
-    expect(addChild.mock.calls[0]?.[0]).toBeInstanceOf(TabsBlock);
+    expect(addChild.mock.calls[0]?.[0]).toBeInstanceOf(blockType);
   });
 
   it('uses block action-add over the global edit action and performs the real add mutation', async () => {

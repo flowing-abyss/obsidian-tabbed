@@ -3,7 +3,11 @@ import { App, Notice } from 'obsidian-test-mocks/obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { parseColumnsSource } from '../columns/column-parser.js';
 import { ColumnBody } from './column-body.js';
-import { ColumnsBlock } from './columns-block.js';
+import {
+  browserColumnsEnvironment,
+  ColumnsBlock,
+  type ColumnsEnvironment,
+} from './columns-block.js';
 import type { RenderMarkdown } from './markdown-renderer.js';
 import { RenderScope } from './render-scope.js';
 
@@ -21,13 +25,213 @@ function createBlock(
   source: string,
   renderer: RenderMarkdown,
   parser: typeof parseColumnsSource = parseColumnsSource,
+  environment?: ColumnsEnvironment,
 ) {
   const app = App.createConfigured__().asOriginalType__();
   const container = document.body.createDiv();
-  const block = new ColumnsBlock(app, container, source, context(), renderer, parser);
+  const block = new ColumnsBlock(app, container, source, context(), renderer, parser, environment);
   block.load();
   return { app, block, container };
 }
+
+function resizeHarness(available = true) {
+  let callback: ResizeObserverCallback | undefined;
+  let observed: Element | undefined;
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  const observer = {
+    observe: vi.fn((target: Element) => {
+      observed = target;
+    }),
+    unobserve: vi.fn(),
+    disconnect: vi.fn(),
+  };
+  const environment = {
+    createResizeObserver: vi.fn((handler: ResizeObserverCallback) => {
+      callback = handler;
+      return available ? observer : null;
+    }),
+    requestFrame: vi.fn((handler: FrameRequestCallback) => {
+      const id = nextFrame++;
+      frames.set(id, handler);
+      return id;
+    }),
+    cancelFrame: vi.fn((id: number) => {
+      frames.delete(id);
+    }),
+    computedStyle: (target: Element) =>
+      ({
+        fontSize: target === target.ownerDocument.documentElement ? '16px' : '20px',
+        columnGap: '16px',
+      }) as CSSStyleDeclaration,
+  };
+  return {
+    environment,
+    observer,
+    frames,
+    notify(width: number) {
+      if (callback === undefined || observed === undefined)
+        throw new Error('Expected observed columns root');
+      callback([{ target: observed, contentRect: { width } } as ResizeObserverEntry], observer);
+    },
+    flush() {
+      for (const [id, frame] of frames) {
+        frames.delete(id);
+        frame(0);
+      }
+    },
+  };
+}
+
+describe('ColumnsBlock responsive lifecycle', () => {
+  const renderer = async () => {};
+  const source = 'column:\nfirst\ncolumn:\nsecond';
+
+  it('does not allocate an observer or frame for default scroll', () => {
+    const harness = resizeHarness();
+    const { block } = createBlock(source, renderer, undefined, harness.environment);
+    expect(harness.environment.createResizeObserver).not.toHaveBeenCalled();
+    expect(harness.frames.size).toBe(0);
+    block.unload();
+  });
+
+  it('uses document rem and direct gap at the 592px boundary, preserving nodes and coalescing frames', () => {
+    const harness = resizeHarness();
+    const { block, container } = createBlock(
+      `stack\n${source}`,
+      renderer,
+      undefined,
+      harness.environment,
+    );
+    const root = element(container, '.tabbed-columns');
+    const grid = element(root, ':scope > .tabbed-columns__grid');
+    const children = Array.from(grid.children);
+    const toggle = vi.spyOn(root.classList, 'toggle');
+    expect(harness.environment.createResizeObserver).toHaveBeenCalledOnce();
+    expect(harness.observer.observe).toHaveBeenCalledExactlyOnceWith(root);
+    harness.notify(593);
+    harness.notify(591);
+    expect(harness.frames.size).toBe(1);
+    expect(harness.environment.requestFrame).toHaveBeenCalledOnce();
+    harness.flush();
+    expect(root.classList.contains('is-stacked')).toBe(true);
+    harness.notify(100);
+    harness.flush();
+    expect(toggle).toHaveBeenCalledTimes(1);
+    expect(Array.from(grid.children)).toEqual(children);
+    harness.notify(592);
+    harness.flush();
+    expect(root.classList.contains('is-stacked')).toBe(false);
+    harness.notify(593);
+    harness.flush();
+    expect(root.classList.contains('is-stacked')).toBe(false);
+    expect(toggle).toHaveBeenCalledTimes(2);
+    expect(Array.from(grid.children)).toEqual(children);
+    block.unload();
+  });
+
+  it('disconnects and cancels even frame zero, and retained callbacks cannot mutate or reschedule after unload', () => {
+    const harness = resizeHarness();
+    const { block, container } = createBlock(
+      `stack\n${source}`,
+      renderer,
+      undefined,
+      harness.environment,
+    );
+    const root = element(container, '.tabbed-columns');
+    harness.notify(100);
+    const retainedFrame = [...harness.frames.values()][0];
+    block.unload();
+    expect(harness.observer.disconnect).toHaveBeenCalledOnce();
+    expect(harness.environment.cancelFrame).toHaveBeenCalledExactlyOnceWith(0);
+    const html = root.outerHTML;
+    harness.notify(100);
+    retainedFrame?.(0);
+    expect(harness.frames.size).toBe(0);
+    expect(harness.environment.requestFrame).toHaveBeenCalledOnce();
+    expect(root.outerHTML).toBe(html);
+    expect(container.childElementCount).toBe(0);
+  });
+
+  it('keeps the scroll layout when ResizeObserver is unavailable', () => {
+    const harness = resizeHarness(false);
+    const { block, container } = createBlock(
+      `stack\n${source}`,
+      renderer,
+      undefined,
+      harness.environment,
+    );
+    expect(harness.environment.createResizeObserver).toHaveBeenCalledOnce();
+    expect(element(container, '.tabbed-columns').classList.contains('is-stacked')).toBe(false);
+    expect(harness.frames.size).toBe(0);
+    block.unload();
+  });
+
+  it('renders a stack block through the browser environment when the host has no ResizeObserver', () => {
+    vi.stubGlobal('ResizeObserver', undefined);
+    try {
+      const { block, container } = createBlock(
+        `stack\n${source}`,
+        renderer,
+        undefined,
+        browserColumnsEnvironment,
+      );
+      const root = element(container, '.tabbed-columns');
+      expect(root.classList.contains('is-stacked')).toBe(false);
+      expect(root.querySelectorAll('.tabbed-columns__column')).toHaveLength(2);
+      block.unload();
+      expect(container.childElementCount).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('uses browser frames and computed styles to stack, then cancels a pending browser frame on unload', async () => {
+    let notify: ((width: number) => void) | undefined;
+    const cancel = vi.spyOn(window, 'cancelAnimationFrame');
+    class HostResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(target: Element): void {
+        notify = (width) => {
+          this.callback([{ target, contentRect: { width } } as ResizeObserverEntry], this);
+        };
+      }
+      disconnect(): void {}
+      unobserve(): void {}
+    }
+    vi.stubGlobal('ResizeObserver', HostResizeObserver);
+    vi.spyOn(window, 'getComputedStyle').mockImplementation(
+      (target) =>
+        ({
+          fontSize: target === target.ownerDocument.documentElement ? '16px' : '20px',
+          columnGap: '16px',
+        }) as CSSStyleDeclaration,
+    );
+    try {
+      const { block, container } = createBlock(
+        `stack\n${source}`,
+        renderer,
+        undefined,
+        browserColumnsEnvironment,
+      );
+      const root = element(container, '.tabbed-columns');
+      if (notify === undefined) throw new Error('Expected host observation');
+      notify(591);
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+      expect(root.classList.contains('is-stacked')).toBe(true);
+      notify(592);
+      block.unload();
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(container.childElementCount).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 async function settle(): Promise<void> {
   await new Promise<void>((resolve) => {

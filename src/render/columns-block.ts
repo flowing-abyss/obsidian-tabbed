@@ -1,5 +1,10 @@
 import { MarkdownRenderChild, type App, type MarkdownPostProcessorContext } from 'obsidian';
-import { gridTrackList, normalizeColumnWeights } from '../columns/column-layout.js';
+import {
+  gridTrackList,
+  normalizeColumnWeights,
+  shouldStack,
+  stackingThreshold,
+} from '../columns/column-layout.js';
 import type { ParsedColumnsDocument } from '../columns/column-model.js';
 import { literalColumnsDocument, parseColumnsSource } from '../columns/column-parser.js';
 import { formatError, logError } from '../diagnostics.js';
@@ -8,6 +13,24 @@ import { renderMarkdown, type RenderMarkdown } from './markdown-renderer.js';
 import { RenderScope } from './render-scope.js';
 
 let nextInstanceId = 0;
+
+export interface ColumnsEnvironment {
+  createResizeObserver(callback: ResizeObserverCallback): ResizeObserver | null;
+  requestFrame(callback: FrameRequestCallback): number;
+  cancelFrame(handle: number): void;
+  computedStyle(element: Element): CSSStyleDeclaration;
+}
+
+export const browserColumnsEnvironment: ColumnsEnvironment = {
+  createResizeObserver: (callback) =>
+    typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(callback),
+  requestFrame: (callback) => window.requestAnimationFrame(callback),
+  cancelFrame: (handle) => {
+    window.cancelAnimationFrame(handle);
+  },
+  computedStyle: (element) =>
+    (element.ownerDocument.defaultView ?? window).getComputedStyle(element),
+};
 
 interface RenderOperation {
   readonly scope: RenderScope;
@@ -23,6 +46,7 @@ export class ColumnsBlock extends MarkdownRenderChild {
   private readonly app: App;
   private readonly context: MarkdownPostProcessorContext;
   private readonly renderer: RenderMarkdown;
+  private readonly environment: ColumnsEnvironment;
   private readonly parsedDocument: ParsedColumnsDocument;
   private readonly rootEl: HTMLElement;
   private readonly gridEl: HTMLElement;
@@ -37,6 +61,7 @@ export class ColumnsBlock extends MarkdownRenderChild {
       context,
       renderer = renderMarkdown,
       parser = parseColumnsSource,
+      environment = browserColumnsEnvironment,
     ]: [
       App,
       HTMLElement,
@@ -44,12 +69,14 @@ export class ColumnsBlock extends MarkdownRenderChild {
       MarkdownPostProcessorContext,
       RenderMarkdown?,
       typeof parseColumnsSource?,
+      ColumnsEnvironment?,
     ]
   ) {
     super(containerEl);
     this.app = app;
     this.context = context;
     this.renderer = renderer;
+    this.environment = environment;
     this.parsedDocument = this.parseDocument(source, parser);
     this.rootEl = containerEl.createDiv({
       cls: 'tabbed-columns',
@@ -97,11 +124,53 @@ export class ColumnsBlock extends MarkdownRenderChild {
         render: () => body.render(),
       });
     });
+    this.observeStacking();
   }
 
   override onunload(): void {
     this.generation += 1;
     this.rootEl.remove();
+  }
+
+  private observeStacking(): void {
+    if (this.parsedDocument.layout !== 'stack') return;
+    const generation = this.generation;
+    let disposed = false;
+    let frame: number | null = null;
+    let width = 0;
+    let stacked = false;
+    const observer = this.environment.createResizeObserver((entries) => {
+      if (disposed || generation !== this.generation) return;
+      const entry = entries.find((candidate) => candidate.target === this.rootEl);
+      if (entry === undefined) return;
+      width = entry.contentRect.width;
+      if (frame !== null) return;
+      frame = this.environment.requestFrame(() => {
+        frame = null;
+        if (disposed || generation !== this.generation) return;
+        const rootStyle = this.environment.computedStyle(this.rootEl.ownerDocument.documentElement);
+        const parsedGap = Number.parseFloat(this.environment.computedStyle(this.gridEl).columnGap);
+        const gap = Number.isFinite(parsedGap) ? parsedGap : 0;
+        const threshold = stackingThreshold(
+          this.parsedDocument.columns.length,
+          18 * Number.parseFloat(rootStyle.fontSize),
+          gap,
+        );
+        const next = shouldStack(width, threshold);
+        if (next !== stacked) {
+          this.rootEl.classList.toggle('is-stacked', next);
+          stacked = next;
+        }
+      });
+    });
+    if (observer === null) return;
+    this.register(() => {
+      disposed = true;
+      observer.disconnect();
+      if (frame !== null) this.environment.cancelFrame(frame);
+      frame = null;
+    });
+    observer.observe(this.rootEl);
   }
 
   private parseDocument(source: string, parser: typeof parseColumnsSource): ParsedColumnsDocument {

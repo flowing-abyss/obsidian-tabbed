@@ -184,6 +184,11 @@
   min-width: 0;
 }
 
+/* stylelint-disable-next-line selector-class-pattern -- Direct-child BEM selector keeps nested grids independent. */
+.tabbed-columns.is-stacked > .tabbed-columns__grid {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
 .tabbed-columns [class~='tabbed-columns__column'],
 .tabbed-columns [class~='tabbed-columns__content'] {
   min-width: 0;

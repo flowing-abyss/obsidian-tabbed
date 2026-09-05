@@ -4,6 +4,7 @@ import { TabEditorModal } from './editor/tab-editor-modal.js';
 import { createTabbedCommands } from './interactions/commands.js';
 import { DragController } from './interactions/drag-controller.js';
 import { addDefaultTab, showTabMenu } from './interactions/tab-menu.js';
+import { ColumnsBlock } from './render/columns-block.js';
 import { TabsBlock, type TabsBlockHost } from './render/tabs-block.js';
 import { TabbedSettingsTab } from './settings-tab.js';
 import { normalizeSettings, type TabbedSettings } from './settings.js';
@@ -69,6 +70,9 @@ export default class TabbedPlugin extends Plugin {
           this.blockHost,
         ),
       );
+    });
+    this.registerMarkdownCodeBlockProcessor('columns', (source, element, context) => {
+      context.addChild(new ColumnsBlock(this.app, element, source, context));
     });
     for (const command of createTabbedCommands({
       getSettings: () => this.settings,
