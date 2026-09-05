@@ -169,3 +169,38 @@
 .tabbed-editor-modal [class~='tabbed-editor-modal__content'] .cm-scroller {
   overflow: auto;
 }
+
+.tabbed-columns {
+  --tabbed-column-min-width: 18rem;
+
+  min-width: 0;
+  overflow-x: auto;
+  color: var(--text-normal);
+}
+
+.tabbed-columns > [class~='tabbed-columns__grid'] {
+  display: grid;
+  gap: var(--size-4-4);
+  min-width: 0;
+}
+
+.tabbed-columns [class~='tabbed-columns__column'],
+.tabbed-columns [class~='tabbed-columns__content'] {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.tabbed-columns [class~='tabbed-columns__title'] {
+  margin-bottom: var(--size-4-2);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.tabbed-columns [class~='tabbed-columns__title'] > * {
+  margin: 0;
+}
+
+.tabbed-columns [class~='tabbed-columns__fallback'] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
