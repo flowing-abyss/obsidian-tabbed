@@ -1,6 +1,6 @@
 {
   "name": "tabbed",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "description": "Create lazy-loading tabs in your notes.",
   "main": "main.js",
