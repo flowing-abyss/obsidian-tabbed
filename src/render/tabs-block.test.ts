@@ -15,8 +15,16 @@ import type { RenderMarkdown } from './markdown-renderer.js';
 import { TabsBlock, type TabsBlockHost } from './tabs-block.js';
 
 const twoTabs = ['tab: First', 'first body', 'tab: Second', 'second body'].join('\n');
+const threeTabs = [
+  'tab: First',
+  'first body',
+  'tab: Second',
+  'second body',
+  'tab: Third',
+  'third body',
+].join('\n');
 
-it('deactivates nested columns and sibling resources despite a throwing registered cleanup', async () => {
+it('keeps nested columns and sibling resources live until block unload', async () => {
   const log = vi.spyOn(console, 'error').mockImplementation(() => {});
   const cleanups: Array<ReturnType<typeof vi.fn>> = [];
   let nestedRoot!: HTMLElement;
@@ -45,14 +53,17 @@ it('deactivates nested columns and sibling resources despite a throwing register
   expect(cleanups).toHaveLength(2);
 
   await expect(block.activate(1)).resolves.toBeUndefined();
-  for (const cleanup of cleanups) expect(cleanup).toHaveBeenCalledOnce();
-  expect(outerCleanup).toHaveBeenCalledOnce();
-  expect(nestedRoot.querySelector('.tabbed-columns')).toBeNull();
-  expect(container.querySelector('.tabbed-columns')).toBeNull();
+  for (const cleanup of cleanups) expect(cleanup).not.toHaveBeenCalled();
+  expect(outerCleanup).not.toHaveBeenCalled();
+  expect(nestedRoot.querySelector('.tabbed-columns')).not.toBeNull();
+  expect(container.querySelector('.tabbed-columns')).not.toBeNull();
+
+  block.unload();
   expect(log).toHaveBeenCalledExactlyOnceWith('[tabbed] Could not clean up rendered Markdown', {
     cause: 'nested cleanup failed',
   });
-  block.unload();
+  for (const cleanup of cleanups) expect(cleanup).toHaveBeenCalledOnce();
+  expect(outerCleanup).toHaveBeenCalledOnce();
 });
 
 function context(sourcePath = 'Note.md'): MarkdownPostProcessorContext {
@@ -343,45 +354,93 @@ describe('TabsBlock initial rendering', () => {
 });
 
 describe('TabsBlock body lifecycle', () => {
-  it('detaches and unloads A before rendering B and ignores A completing last', async () => {
+  it('renders each visited body once and preserves its live panel state', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { block, container } = createBlock(renderer);
+    const firstPanel = required(
+      container.querySelector<HTMLElement>('.tabbed__panel'),
+      'Expected the first panel',
+    );
+    firstPanel.scrollTop = 37;
+    firstPanel.dataset['localState'] = 'preserved';
+
+    await block.activate(1);
+    const secondPanel = required(
+      container.querySelector<HTMLElement>('.tabbed__panel.is-active'),
+      'Expected the second panel',
+    );
+    await block.activate(0);
+
+    expect(
+      renderer.mock.calls.filter(([, , element]) => element.matches('.tabbed__panel')),
+    ).toHaveLength(2);
+    expect(container.querySelector('.tabbed__panel.is-active')).toBe(firstPanel);
+    expect(firstPanel.scrollTop).toBe(37);
+    expect(firstPanel.dataset['localState']).toBe('preserved');
+    expect(secondPanel.isConnected).toBe(true);
+    block.unload();
+  });
+
+  it('shares pending renders across A to B to A activation and keeps the final selection active', async () => {
     const first = deferred();
     const second = deferred();
-    const bodyCalls: Array<{ markdown: string; panel: HTMLElement; component: Component }> = [];
-    const sequence: string[] = [];
-    const renderer = vi.fn<RenderMarkdown>((...[_app, markdown, element, _path, component]) => {
+    const renderer = vi.fn<RenderMarkdown>((_app, markdown, element) => {
       if (!element.matches('.tabbed__panel')) {
         return Promise.resolve();
       }
-      bodyCalls.push({ markdown, panel: element, component });
-      sequence.push(`render:${markdown.trim()}`);
       return (markdown.startsWith('first') ? first.promise : second.promise).then(() => {
         element.textContent = markdown.trim();
       });
     });
     const { block, container } = createBlock(renderer);
-    const firstChild = bodyCalls[0]?.component;
-    if (firstChild === undefined) {
-      throw new Error('Expected the first body child');
-    }
-    const unloadFirst = vi.spyOn(firstChild, 'unload').mockImplementation(() => {
-      sequence.push('unload:first');
-    });
-
     const activateSecond = block.activate(1);
+    const activateFirst = block.activate(0);
 
-    expect(sequence.slice(-2)).toStrictEqual(['unload:first', 'render:second body']);
-    expect(bodyCalls[0]?.panel.isConnected).toBe(false);
-    expect(bodyCalls[0]?.panel).not.toBe(bodyCalls[1]?.panel);
-    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(1);
+    expect(
+      renderer.mock.calls.filter(([, , element]) => element.matches('.tabbed__panel')),
+    ).toHaveLength(2);
+    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(2);
 
     second.resolve();
     await activateSecond;
-    first.resolve();
-    await settle();
+    expect(
+      container.querySelector<HTMLElement>('.tabbed__panel.is-active')?.dataset['tabIndex'],
+    ).toBe('0');
 
-    expect(unloadFirst).toHaveBeenCalledTimes(1);
-    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(1);
-    expect(container.querySelector('.tabbed__panel')?.textContent).toBe('second body');
+    first.resolve();
+    await activateFirst;
+    expect(
+      container.querySelector<HTMLElement>('.tabbed__panel.is-active')?.dataset['tabIndex'],
+    ).toBe('0');
+    block.unload();
+  });
+
+  it('inserts newly visited panels in tab-index order without moving cached panels', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { block, container } = createBlock(renderer, threeTabs);
+    const firstPanel = required(
+      container.querySelector<HTMLElement>('.tabbed__panel[data-tab-index="0"]'),
+      'Expected panel 0',
+    );
+
+    await block.activate(2);
+    const thirdPanel = required(
+      container.querySelector<HTMLElement>('.tabbed__panel[data-tab-index="2"]'),
+      'Expected panel 2',
+    );
+    const parent = required(firstPanel.parentElement, 'Expected panel parent');
+    await block.activate(1);
+
+    expect(
+      Array.from(parent.querySelectorAll<HTMLElement>(':scope > .tabbed__panel')).map(
+        (panel) => panel.dataset['tabIndex'],
+      ),
+    ).toStrictEqual(['0', '1', '2']);
+    expect(firstPanel.parentElement).toBe(parent);
+    expect(thirdPanel.parentElement).toBe(parent);
+    expect(container.querySelector('.tabbed__panel[data-tab-index="0"]')).toBe(firstPanel);
+    expect(container.querySelector('.tabbed__panel[data-tab-index="2"]')).toBe(thirdPanel);
+    block.unload();
   });
 
   it('catches a stale rejection without logging it or changing the current panel', async () => {
@@ -405,10 +464,10 @@ describe('TabsBlock body lifecycle', () => {
     await settle();
 
     expect(consoleError).not.toHaveBeenCalled();
-    expect(container.querySelector('.tabbed__panel')?.textContent).toBe('second body');
+    expect(container.querySelector('.tabbed__panel.is-active')?.textContent).toBe('second body');
   });
 
-  it('cleans up resources registered after a stale body render resolves', async () => {
+  it('keeps resources registered by an inactive body render until block unload', async () => {
     const first = deferred();
     const lateCleanup = vi.fn();
     const lateChild = new CleanupChild();
@@ -432,12 +491,14 @@ describe('TabsBlock body lifecycle', () => {
     first.resolve();
     await settle();
 
-    expect(lateCleanup).toHaveBeenCalledOnce();
+    expect(lateCleanup).not.toHaveBeenCalled();
     expect(lateChild.loads).toBe(1);
-    expect(lateChild.unloads).toBe(1);
-    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(1);
-    expect(container.querySelector('.tabbed__panel')?.textContent).toBe('Current second');
+    expect(lateChild.unloads).toBe(0);
+    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(2);
+    expect(container.querySelector('.tabbed__panel.is-active')?.textContent).toBe('Current second');
     block.unload();
+    expect(lateCleanup).toHaveBeenCalledOnce();
+    expect(lateChild.unloads).toBe(1);
   });
 
   it('logs each current body rejection exactly once and keeps an empty panel', async () => {
@@ -466,8 +527,8 @@ describe('TabsBlock body lifecycle', () => {
       index: 1,
       cause: 'failed second body',
     });
-    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(1);
-    expect(container.querySelector('.tabbed__panel')?.childElementCount).toBe(0);
+    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(2);
+    expect(container.querySelector('.tabbed__panel.is-active')?.childElementCount).toBe(0);
   });
 
   it('logs a rejected title render once without adding status or error UI', async () => {
@@ -641,7 +702,7 @@ describe('TabsBlock accessible layout', () => {
     second.block.unload();
   });
 
-  it('updates selection links synchronously while replacing the panel', async () => {
+  it('updates selection links synchronously while retaining the inactive panel', async () => {
     const second = deferred();
     const renderer = vi.fn<RenderMarkdown>(async (_app, markdown, element) => {
       if (element.matches('.tabbed__panel') && markdown.startsWith('second')) {
@@ -649,15 +710,20 @@ describe('TabsBlock accessible layout', () => {
       }
     });
     const { block, container } = createBlock(renderer);
-    const oldPanel = container.querySelector<HTMLElement>('.tabbed__panel');
+    const oldPanel = required(
+      container.querySelector<HTMLElement>('.tabbed__panel'),
+      'Expected the initial panel',
+    );
 
     const activation = block.activate(1);
-    const panel = container.querySelector<HTMLElement>('.tabbed__panel');
+    const panel = container.querySelector<HTMLElement>('.tabbed__panel.is-active');
 
     expect(block.selectedIndex).toBe(1);
-    expect(oldPanel?.isConnected).toBe(false);
+    expect(oldPanel.isConnected).toBe(true);
     expect(panel).not.toBe(oldPanel);
-    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(1);
+    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(2);
+    expect(oldPanel.inert).toBe(true);
+    expect(oldPanel.getAttribute('aria-hidden')).toBe('true');
     expect(block.tabElements.map((tab) => tab.getAttribute('aria-selected'))).toStrictEqual([
       'false',
       'true',
@@ -712,7 +778,7 @@ describe('TabsBlock accessible layout', () => {
     second.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await settle();
     expect(block.selectedIndex).toBe(1);
-    expect(bodyMarkdown).toHaveLength(4);
+    expect(bodyMarkdown).toHaveLength(2);
 
     block.unload();
   });
@@ -1148,7 +1214,7 @@ describe('TabsBlock selection memory and settings', () => {
     result.block.unload();
   });
 
-  it('refreshes only the active body', async () => {
+  it('refreshes the active body after clearing the body cache', async () => {
     const titles: string[] = [];
     const bodies: string[] = [];
     const renderer = vi.fn<RenderMarkdown>(async (_app, markdown, element) => {

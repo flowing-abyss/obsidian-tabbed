@@ -129,6 +129,14 @@
   overflow: auto;
 }
 
+.tabbed > [class~='tabbed__panels'] > [class~='tabbed__panel']:not(.is-active) {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .tabbed[class~='tabbed--border-none'],
 .tabbed[class~='tabbed--border-hover'] {
   border-color: transparent;

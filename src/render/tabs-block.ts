@@ -26,6 +26,26 @@ export interface TabsBlockHost {
   openTabMenu(block: TabsBlock, index: number, event: MouseEvent): void;
 }
 
+interface CachedBodyEntry {
+  readonly index: number;
+  readonly panelEl: HTMLElement;
+  body: TabBody | null;
+  readonly renderPromise: Promise<void>;
+}
+
+interface DeferredCompletion {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+}
+
+function createDeferredCompletion(): DeferredCompletion {
+  let resolvePromise: (() => void) | undefined;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: () => resolvePromise?.() };
+}
+
 const positionClasses = ['tabbed--top', 'tabbed--bottom', 'tabbed--left', 'tabbed--right'] as const;
 const lineClasses = ['tabbed--one', 'tabbed--multi'] as const;
 const borderClasses = [
@@ -58,9 +78,11 @@ export class TabsBlock extends MarkdownRenderChild {
   private locatorValue: SourceLocator | null = null;
   private tabs: HTMLElement[] = [];
   private titleChildren: RenderScope[] = [];
-  private body: TabBody | null = null;
+  private readonly bodyCache = new Map<number, CachedBodyEntry>();
+  private readonly bodyCompletions = new Map<CachedBodyEntry, DeferredCompletion>();
+  private readonly startedBodies = new Set<CachedBodyEntry>();
+  private bodyCacheEpoch = 0;
   private mutationInteractions: Component | null = null;
-  private generation = 0;
   private locatorGeneration = 0;
   private parserFailed = false;
 
@@ -153,11 +175,9 @@ export class TabsBlock extends MarkdownRenderChild {
   }
 
   override onunload(): void {
-    this.generation += 1;
     this.locatorGeneration += 1;
     this.locatorValue = null;
-    this.body?.panelEl.remove();
-    this.body = null;
+    this.clearBodies(false);
     this.mutationInteractions = null;
     this.titleChildren = [];
     this.tabs = [];
@@ -168,51 +188,21 @@ export class TabsBlock extends MarkdownRenderChild {
 
   async activate(index: number): Promise<void> {
     const selected = this.clampIndex(index);
-    const generation = ++this.generation;
     this.selection = selected;
     this.rememberSelection();
-
-    if (this.body !== null) {
-      const oldBody = this.body;
-      this.body = null;
-      oldBody.panelEl.remove();
-      this.removeChild(oldBody);
-    }
-
-    const tab = this.parsedDocument.tabs[selected];
-    if (tab === undefined) {
+    const entry = this.prepareBody(selected);
+    if (entry === null) {
+      this.updateTabState(null);
       return;
     }
-
-    const panel = createDiv({
-      cls: 'tabbed__panel is-active',
-      attr: {
-        id: `tabbed-${this.instanceId}-panel-${generation}`,
-        role: 'tabpanel',
-      },
-    });
-    panel.inert = false;
-    this.panelsEl.append(panel);
-    const body = this.addChild(
-      new TabBody(this.app, panel, tab.content, this.sourcePath, this.renderer),
-    );
-    this.body = body;
-    this.updateTabState(panel);
-
-    try {
-      await body.render();
-    } catch (error) {
-      if (generation === this.generation && this.body === body) {
-        panel.empty();
-        logError('Could not render tab body', this.errorContext(selected, error));
-      }
-    }
-    if (generation === this.generation && this.body === body) {
-      this.reconcileLocatorAfterRender();
-    }
+    this.setActiveBody(entry);
+    this.startBodyRender(entry);
+    await entry.renderPromise;
   }
 
   refreshActiveBody(): Promise<void> {
+    this.clearBodies();
+    this.arrangeShell();
     return this.activate(this.selection);
   }
 
@@ -234,12 +224,7 @@ export class TabsBlock extends MarkdownRenderChild {
     this.reconcileMutationInteractions();
     this.selection = this.clampIndex(this.selection);
     this.disposeTitles();
-    if (this.body !== null) {
-      const oldBody = this.body;
-      this.body = null;
-      oldBody.panelEl.remove();
-      this.removeChild(oldBody);
-    }
+    this.clearBodies();
     this.renderTitlesAndAction();
     this.arrangeShell();
     this.applyShell();
@@ -354,7 +339,7 @@ export class TabsBlock extends MarkdownRenderChild {
       return button;
     });
     this.renderAction();
-    this.updateTabState(this.body?.panelEl ?? null);
+    this.updateTabState(this.bodyCache.get(this.selection)?.panelEl ?? null);
   }
 
   private renderAction(): void {
@@ -459,7 +444,7 @@ export class TabsBlock extends MarkdownRenderChild {
         this.locatorValue !== null &&
         this.settings.doubleClickToEdit &&
         event.target instanceof Element &&
-        this.body?.panelEl.contains(event.target) === true
+        this.bodyCache.get(this.selection)?.panelEl.contains(event.target) === true
       ) {
         this.host.editTab(this, this.selection);
       }
@@ -507,6 +492,96 @@ export class TabsBlock extends MarkdownRenderChild {
     }
     const delta = key === previous ? -1 : 1;
     return (index + delta + this.tabs.length) % this.tabs.length;
+  }
+
+  private prepareBody(index: number): CachedBodyEntry | null {
+    const cached = this.bodyCache.get(index);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const tab = this.parsedDocument.tabs[index];
+    if (tab === undefined) {
+      return null;
+    }
+    const completion = createDeferredCompletion();
+    const panelEl = createDiv({
+      cls: 'tabbed__panel',
+      attr: {
+        id: `tabbed-${this.instanceId}-panel-${this.bodyCacheEpoch}-${index}`,
+        role: 'tabpanel',
+        'data-tab-index': String(index),
+      },
+    });
+    const body = this.addChild(
+      new TabBody(this.app, panelEl, tab.content, this.sourcePath, this.renderer),
+    );
+    const entry: CachedBodyEntry = { index, panelEl, body, renderPromise: completion.promise };
+    this.bodyCache.set(index, entry);
+    this.bodyCompletions.set(entry, completion);
+    const next = [...this.bodyCache.values()]
+      .filter((candidate) => candidate.index > index)
+      .sort((left, right) => left.index - right.index)[0];
+    this.panelsEl.insertBefore(panelEl, next?.panelEl ?? null);
+    return entry;
+  }
+
+  private startBodyRender(entry: CachedBodyEntry): void {
+    if (this.startedBodies.has(entry) || entry.body === null) {
+      return;
+    }
+    this.startedBodies.add(entry);
+    const completion = this.bodyCompletions.get(entry);
+    if (completion === undefined) {
+      return;
+    }
+    entry.body.render().then(
+      () => {
+        if (this.bodyCache.get(entry.index) === entry) {
+          this.reconcileLocatorAfterRender();
+        }
+        completion.resolve();
+      },
+      (error: unknown) => {
+        if (this.bodyCache.get(entry.index) === entry) {
+          entry.panelEl.empty();
+          if (this.selection === entry.index) {
+            logError('Could not render tab body', this.errorContext(entry.index, error));
+          }
+        }
+        completion.resolve();
+      },
+    );
+  }
+
+  private setActiveBody(entry: CachedBodyEntry): void {
+    for (const candidate of this.bodyCache.values()) {
+      const active = candidate === entry;
+      if (!active && candidate.panelEl.contains(document.activeElement)) {
+        this.tabs[entry.index]?.focus();
+      }
+      candidate.panelEl.toggleClass('is-active', active);
+      candidate.panelEl.inert = !active;
+      if (active) {
+        candidate.panelEl.removeAttribute('aria-hidden');
+      } else {
+        candidate.panelEl.setAttribute('aria-hidden', 'true');
+      }
+    }
+    this.updateTabState(entry.panelEl);
+  }
+
+  private clearBodies(unloadChildren = true): void {
+    this.bodyCacheEpoch += 1;
+    for (const entry of this.bodyCache.values()) {
+      entry.panelEl.remove();
+      if (unloadChildren && entry.body !== null) {
+        this.removeChild(entry.body);
+        entry.body = null;
+      }
+    }
+    this.bodyCache.clear();
+    this.bodyCompletions.clear();
+    this.startedBodies.clear();
   }
 
   private updateTabState(panel: HTMLElement | null): void {
