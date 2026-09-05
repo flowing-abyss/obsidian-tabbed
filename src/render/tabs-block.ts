@@ -534,23 +534,29 @@ export class TabsBlock extends MarkdownRenderChild {
     if (completion === undefined) {
       return;
     }
-    entry.body.render().then(
-      () => {
-        if (this.bodyCache.get(entry.index) === entry) {
-          this.reconcileLocatorAfterRender();
+    const handleFailure = (error: unknown): void => {
+      if (this.bodyCache.get(entry.index) === entry) {
+        entry.panelEl.empty();
+        if (this.selection === entry.index) {
+          logError('Could not render tab body', this.errorContext(entry.index, error));
         }
-        completion.resolve();
-      },
-      (error: unknown) => {
-        if (this.bodyCache.get(entry.index) === entry) {
-          entry.panelEl.empty();
-          if (this.selection === entry.index) {
-            logError('Could not render tab body', this.errorContext(entry.index, error));
-          }
-        }
-        completion.resolve();
-      },
-    );
+      }
+      completion.resolve();
+    };
+    let renderResult: unknown;
+    try {
+      renderResult = (entry.body.render as () => unknown)();
+    } catch (error) {
+      handleFailure(error);
+      return;
+    }
+    const renderPromise = Promise.resolve(renderResult);
+    void renderPromise.then(() => {
+      if (this.bodyCache.get(entry.index) === entry) {
+        this.reconcileLocatorAfterRender();
+      }
+      completion.resolve();
+    }, handleFailure);
   }
 
   private setActiveBody(entry: CachedBodyEntry): void {

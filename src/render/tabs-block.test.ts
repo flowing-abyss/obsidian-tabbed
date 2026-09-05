@@ -531,6 +531,28 @@ describe('TabsBlock body lifecycle', () => {
     expect(container.querySelector('.tabbed__panel.is-active')?.childElementCount).toBe(0);
   });
 
+  it('contains synchronous body-render throws and completes the cached entry', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const renderer = vi.fn<RenderMarkdown>((_app, markdown, element) => {
+      if (element.matches('.tabbed__panel') && markdown.startsWith('second')) {
+        throw new Error('synchronous second failure');
+      }
+      return Promise.resolve();
+    });
+    const { block, container } = createBlock(renderer);
+
+    await expect(block.activate(1)).resolves.toBeUndefined();
+    await expect(block.activate(1)).resolves.toBeUndefined();
+
+    expect(consoleError).toHaveBeenLastCalledWith('[tabbed] Could not render tab body', {
+      path: 'Note.md',
+      index: 1,
+      cause: 'synchronous second failure',
+    });
+    expect(container.querySelector('.tabbed__panel.is-active')?.childElementCount).toBe(0);
+    block.unload();
+  });
+
   it('logs a rejected title render once without adding status or error UI', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const renderer = vi.fn<RenderMarkdown>(async (_app, markdown, element) => {
