@@ -141,7 +141,7 @@ export class ColumnsBlock extends MarkdownRenderChild {
     let stacked = false;
     const observer = this.environment.createResizeObserver((entries) => {
       if (disposed || generation !== this.generation) return;
-      const entry = entries.find((candidate) => candidate.target === this.rootEl);
+      const entry = entries.find((candidate) => candidate.target === measureEl);
       if (entry === undefined) return;
       width = entry.contentRect.width;
       if (frame !== null) return;
@@ -164,13 +164,19 @@ export class ColumnsBlock extends MarkdownRenderChild {
       });
     });
     if (observer === null) return;
+    // Bases can change their height inside a ResizeObserver callback. Observe a
+    // zero-height sibling so those descendant changes cannot feed back into us.
+    const measureEl = this.rootEl.createDiv({
+      cls: 'tabbed-columns__measure',
+      attr: { 'aria-hidden': 'true' },
+    });
     this.register(() => {
       disposed = true;
       observer.disconnect();
       if (frame !== null) this.environment.cancelFrame(frame);
       frame = null;
     });
-    observer.observe(this.rootEl);
+    observer.observe(measureEl);
   }
 
   private parseDocument(source: string, parser: typeof parseColumnsSource): ParsedColumnsDocument {

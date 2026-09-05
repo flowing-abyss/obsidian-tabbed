@@ -1,13 +1,19 @@
 import { browser, expect } from '@wdio/globals';
-import { beforeEach, describe, it } from 'mocha';
+import { afterEach, beforeEach, describe, it } from 'mocha';
 import { obsidianPage } from 'wdio-obsidian-service';
 import { Key } from 'webdriverio';
 
 const FIXTURE = 'Tabbed E2E.md';
 
-type ScrollEvidence =
-  | { moved: true; before: number; after: number; clientHeight: number; scrollHeight: number }
-  | { moved: false };
+interface CacheTestWindow extends Window {
+  __tabbedCache?: {
+    panels: HTMLElement[];
+    base: HTMLElement;
+    scrollOwner?: HTMLElement | undefined;
+  };
+  __tabbedErrors?: string[];
+  __tabbedRestoreConsole?: () => void;
+}
 
 async function openFixture(): Promise<void> {
   await obsidianPage.resetVault();
@@ -41,23 +47,29 @@ async function directTabs(root: WebdriverIO.Element): Promise<WebdriverIO.Elemen
   return root.$$(':scope > .tabbed__list > .tabbed__tab').getElements();
 }
 
-async function directPanel(root: WebdriverIO.Element): Promise<WebdriverIO.Element> {
-  const panels = await root.$$(':scope > .tabbed__panel').getElements();
-  expect(panels.length).toEqual(1);
-  const panel = panels[0];
+async function panels(root: WebdriverIO.Element): Promise<WebdriverIO.ElementArray> {
+  return root.$$(':scope > .tabbed__panels > .tabbed__panel').getElements();
+}
+
+async function activePanel(root: WebdriverIO.Element): Promise<WebdriverIO.Element> {
+  const active = await root.$$(':scope > .tabbed__panels > .tabbed__panel.is-active').getElements();
+  expect(active).toHaveLength(1);
+  const panel = active[0];
   if (panel === undefined) {
     throw new Error('Expected one direct active panel');
   }
   return panel;
 }
 
-async function expectOnePanelPerRoot(): Promise<void> {
+async function expectOneActivePanelPerRoot(): Promise<void> {
   const roots = await visibleElements('.tabbed');
   expect(roots.length).toBeGreaterThan(0);
   for (const root of roots) {
-    expect(await root.$$(':scope > .tabbed__panel').length).toEqual(1);
+    await expect(await activePanel(root)).toBeDisplayed();
   }
-  expect((await visibleElements('.tabbed > .tabbed__panel')).length).toEqual(roots.length);
+  expect((await visibleElements('.tabbed > .tabbed__panels > .tabbed__panel')).length).toEqual(
+    roots.length,
+  );
 }
 
 async function clickTab(root: WebdriverIO.Element, index: number): Promise<void> {
@@ -69,138 +81,302 @@ async function clickTab(root: WebdriverIO.Element, index: number): Promise<void>
   await tab.click();
 }
 
+async function replaceActiveNote(path: string): Promise<void> {
+  await browser.executeObsidian(async ({ app, obsidian }, notePath) => {
+    const leaf = app.workspace.getActiveViewOfType(obsidian.MarkdownView)?.leaf;
+    const file = app.vault.getFileByPath(notePath);
+    if (leaf === undefined || file === null) throw new Error('Missing active note or target file');
+    await leaf.openFile(file);
+  }, path);
+}
+
 describe('Tabbed in a real Obsidian vault', () => {
   beforeEach(async () => {
+    await browser.execute(() => {
+      const target = window as CacheTestWindow;
+      const original = console.error;
+      target.__tabbedErrors = [];
+      console.error = (...args: unknown[]) => {
+        target.__tabbedErrors?.push(args.map(String).join(' '));
+        original(...args);
+      };
+      const onError = (event: ErrorEvent) => target.__tabbedErrors?.push(event.message);
+      const onRejection = (event: PromiseRejectionEvent) =>
+        target.__tabbedErrors?.push(String(event.reason));
+      window.addEventListener('error', onError);
+      window.addEventListener('unhandledrejection', onRejection);
+      target.__tabbedRestoreConsole = () => {
+        console.error = original;
+        window.removeEventListener('error', onError);
+        window.removeEventListener('unhandledrejection', onRejection);
+      };
+    });
     await openFixture();
+  });
+
+  afterEach(async () => {
+    const errors = await browser.execute(() => {
+      const target = window as CacheTestWindow;
+      target.__tabbedRestoreConsole?.();
+      const captured = target.__tabbedErrors ?? [];
+      delete target.__tabbedCache;
+      delete target.__tabbedErrors;
+      delete target.__tabbedRestoreConsole;
+      return captured;
+    });
+    expect(errors).toEqual([]);
   });
 
   it('keeps one direct active panel while switching outer and nested tabs', async () => {
     await browser.waitUntil(async () => (await visibleElements('.tabbed')).length === 2);
-    await expectOnePanelPerRoot();
+    await expectOneActivePanelPerRoot();
 
     const outer = await rootAt(0);
+    expect(await panels(outer)).toHaveLength(1);
+    expect(await outer.$$('.bases-embed').length).toBe(0);
     const outerList = outer.$(':scope > .tabbed__list');
     await expect(outerList).toHaveAttribute('aria-orientation', 'vertical');
-    await expect(await directPanel(outer)).toHaveText(
+    await expect(await activePanel(outer)).toHaveText(
       expect.stringContaining('Outer overview body.'),
     );
 
     const nested = await rootAt(1);
-    await expect(await directPanel(nested)).toHaveText(
+    await expect(await activePanel(nested)).toHaveText(
       expect.stringContaining('Nested first body.'),
     );
-    await clickTab(nested, 1);
-    await expect(await directPanel(nested)).toHaveText(
+    if (browser.isMobile) {
+      await clickTab(nested, 1);
+    } else {
+      const first = (await directTabs(nested))[0];
+      if (first === undefined) throw new Error('Missing nested first tab');
+      await browser.execute(
+        (element) => {
+          element.focus();
+        },
+        await first.getElement(),
+      );
+      await browser.keys('ArrowRight');
+      await browser.waitUntil(() =>
+        browser.execute(() => document.activeElement?.textContent === 'Nested two'),
+      );
+      await expect(await activePanel(nested)).toHaveText(
+        expect.stringContaining('Nested first body.'),
+      );
+      await browser.keys('Enter');
+    }
+    await expect(await activePanel(nested)).toHaveText(
       expect.stringContaining('Nested second body.'),
     );
-    await expectOnePanelPerRoot();
+    await expectOneActivePanelPerRoot();
 
-    await clickTab(outer, 1);
+    if (browser.isMobile) {
+      await clickTab(outer, 1);
+    } else {
+      const first = (await directTabs(outer))[0];
+      if (first === undefined) throw new Error('Missing outer first tab');
+      await browser.execute(
+        (element) => {
+          element.focus();
+        },
+        await first.getElement(),
+      );
+      await browser.keys('ArrowDown');
+      await browser.waitUntil(() =>
+        browser.execute(() => document.activeElement?.textContent === 'Items'),
+      );
+      await expect(await activePanel(outer)).toHaveText(
+        expect.stringContaining('Outer overview body.'),
+      );
+      await browser.keys('Enter');
+    }
     await browser.waitUntil(async () => (await visibleElements('.tabbed')).length === 1);
-    await expect(await directPanel(outer)).toHaveText(
+    await expect(await activePanel(outer)).toHaveText(
       expect.stringContaining('Items Base positive control.'),
     );
-    await expectOnePanelPerRoot();
+    await expectOneActivePanelPerRoot();
 
     await clickTab(outer, 0);
     await browser.waitUntil(async () => (await visibleElements('.tabbed')).length === 2);
-    await expect(await directPanel(outer)).toHaveText(
+    await expect(await activePanel(outer)).toHaveText(
       expect.stringContaining('Outer overview body.'),
     );
-    await expectOnePanelPerRoot();
+    await expectOneActivePanelPerRoot();
   });
 
-  it('unloads and recreates a positive-control Base before scrolling to a lower row', async () => {
+  it('reuses the live Base and scroll position after a hidden vault update', async () => {
     const outer = await rootAt(0);
+    await clickTab(outer, 0);
     const outerElement = await outer.getElement();
     await browser.execute((element) => {
       element.setCssProps({ '--tabbed-content-max-height': '240px' });
     }, outerElement);
     await clickTab(outer, 1);
-    const panel = await directPanel(outer);
+    const panel = await activePanel(outer);
     const base = panel.$('.bases-embed');
     await base.waitForExist();
     await expect(base).toHaveText(expect.stringContaining('Item 01'));
-    const originalBaseElement = await base.getElement();
-    await browser.execute((element) => {
-      (window as Window & { __tabbedOriginalBase?: HTMLElement }).__tabbedOriginalBase = element;
-    }, originalBaseElement);
+    const scrollEvidence = await browser.execute(
+      (element) => {
+        const root = element.closest('.tabbed');
+        if (root === null) throw new Error('Missing Base tab root');
+        const cache = {
+          panels: Array.from(
+            root.querySelectorAll<HTMLElement>(':scope > .tabbed__panels > .tabbed__panel'),
+          ),
+          base: element,
+          scrollOwner: undefined as HTMLElement | undefined,
+        };
+        (window as CacheTestWindow).__tabbedCache = cache;
+        const candidates = new Set(Array.from(element.querySelectorAll<HTMLElement>('*')));
+        for (
+          let candidate: HTMLElement | null = element;
+          candidate !== null;
+          candidate = candidate.parentElement
+        ) {
+          candidates.add(candidate);
+        }
+        if (document.scrollingElement instanceof HTMLElement) {
+          candidates.add(document.scrollingElement);
+        }
 
+        for (const candidate of candidates) {
+          const originalScrollTop = candidate.scrollTop;
+          candidate.scrollTop = 0;
+          const before = candidate.scrollTop;
+          candidate.scrollTop = candidate.scrollHeight;
+          const after = candidate.scrollTop;
+          if (after > before) {
+            cache.scrollOwner = candidate;
+            candidate.dispatchEvent(new Event('scroll', { bubbles: true }));
+            return {
+              moved: true,
+              before,
+              after,
+            };
+          }
+          candidate.scrollTop = originalScrollTop;
+        }
+
+        return { moved: false, before: 0, after: 0 };
+      },
+      await base.getElement(),
+    );
+    expect(scrollEvidence.moved).toBe(true);
+    await expect(base).toHaveText(expect.stringContaining('Item 30'));
+    const before = await browser.execute(
+      () => (window as CacheTestWindow).__tabbedCache?.scrollOwner?.scrollTop,
+    );
+    expect(before).toBeGreaterThan(0);
     await clickTab(outer, 0);
+    await expect(panel).not.toBeDisplayed();
+    await expect(base).not.toBeDisplayed();
+    expect(
+      await browser.execute(() => {
+        const cache = (window as CacheTestWindow).__tabbedCache;
+        return (
+          cache !== undefined &&
+          cache.base.isConnected &&
+          cache.panels.every((entry) => entry.isConnected)
+        );
+      }),
+    ).toBe(true);
+
+    try {
+      await browser.executeObsidian(async ({ app }) => {
+        const item = app.vault.getFileByPath('Items/Item 30.md');
+        if (item === null) throw new Error('Missing positive-control Item 30');
+        await app.fileManager.renameFile(item, 'Items/Item 30 Live Cache Probe.md');
+      });
+      await browser.waitUntil(
+        () =>
+          browser.execute(
+            () =>
+              (window as CacheTestWindow).__tabbedCache?.base.textContent.includes(
+                'Item 30 Live Cache Probe',
+              ) === true,
+          ),
+        { timeoutMsg: 'The materialized hidden Base row did not receive the vault rename' },
+      );
+      const tab = (await directTabs(outer))[1];
+      if (tab === undefined) throw new Error('Missing Items tab');
+      const revealed = await browser.execute(
+        (element) => {
+          element.click();
+          const cache = (window as CacheTestWindow).__tabbedCache;
+          const currentPanel = element
+            .closest('.tabbed')
+            ?.querySelector(':scope > .tabbed__panels > .tabbed__panel.is-active');
+          return {
+            samePanel: cache?.panels[1] === currentPanel,
+            sameBase: cache?.base === currentPanel?.querySelector('.bases-embed'),
+            text: cache?.base.innerText,
+            scrollTop: cache?.scrollOwner?.scrollTop,
+          };
+        },
+        await tab.getElement(),
+      );
+      expect(revealed).toMatchObject({ samePanel: true, sameBase: true, scrollTop: before });
+      expect(revealed.text).toContain('Item 30 Live Cache Probe');
+      await expect(base).toBeDisplayed();
+      expect(await outer.$$('.bases-embed').length).toBe(1);
+    } finally {
+      await browser.executeObsidian(async ({ app }) => {
+        const renamed = app.vault.getFileByPath('Items/Item 30 Live Cache Probe.md');
+        if (renamed !== null) await app.fileManager.renameFile(renamed, 'Items/Item 30.md');
+      });
+    }
+  });
+
+  it('keeps identities during rapid switching and unloads every cached panel on navigation', async () => {
+    const outer = await rootAt(0);
+    await clickTab(outer, 0);
+    await clickTab(outer, 1);
+    const base = (await activePanel(outer)).$('.bases-embed');
+    await expect(base).toHaveText(expect.stringContaining('Item 01'));
+    const evidence = await browser.execute(
+      (element) => {
+        const tabs = element.querySelectorAll<HTMLElement>(':scope > .tabbed__list > .tabbed__tab');
+        const original = Array.from(
+          element.querySelectorAll<HTMLElement>(':scope > .tabbed__panels > .tabbed__panel'),
+        );
+        const originalBase = element.querySelector<HTMLElement>('.bases-embed');
+        if (originalBase === null) throw new Error('Missing positive-control Base');
+        (window as CacheTestWindow).__tabbedCache = { panels: original, base: originalBase };
+        for (const index of [0, 1, 0, 1, 0]) tabs[index]?.click();
+        const current = Array.from(
+          element.querySelectorAll<HTMLElement>(':scope > .tabbed__panels > .tabbed__panel'),
+        );
+        return {
+          count: current.length,
+          active: current.filter((entry) => entry.classList.contains('is-active')).length,
+          samePanels: current.every((entry, index) => entry === original[index]),
+          sameBase: element.querySelector('.bases-embed') === originalBase,
+          bases: element.querySelectorAll('.bases-embed').length,
+        };
+      },
+      await outer.getElement(),
+    );
+    expect(evidence).toEqual({ count: 2, active: 1, samePanels: true, sameBase: true, bases: 1 });
+    await clickTab(outer, 1);
+    await replaceActiveNote('Welcome.md');
     await browser.waitUntil(() =>
       browser.execute(() => {
-        const original = (window as Window & { __tabbedOriginalBase?: HTMLElement })
-          .__tabbedOriginalBase;
-        return original !== undefined && !original.isConnected;
+        const cache = (window as CacheTestWindow).__tabbedCache;
+        return (
+          cache !== undefined &&
+          !cache.base.isConnected &&
+          cache.panels.every((entry) => !entry.isConnected)
+        );
       }),
     );
-    const detachedOriginal = await browser.execute(() => {
-      const original = (window as Window & { __tabbedOriginalBase?: HTMLElement })
-        .__tabbedOriginalBase;
-      return {
-        exists: original !== undefined,
-        isConnected: original?.isConnected ?? false,
-        isInDocument: original === undefined ? false : document.documentElement.contains(original),
-      };
-    });
-    expect(detachedOriginal).toEqual({ exists: true, isConnected: false, isInDocument: false });
-
-    await clickTab(outer, 1);
-    const recreatedPanel = await directPanel(outer);
-    const recreatedBase = recreatedPanel.$('.bases-embed');
-    await recreatedBase.waitForExist();
-    await expect(recreatedBase).toHaveText(expect.stringContaining('Item 01'));
-    const recreatedBaseElement = await recreatedBase.getElement();
-    const recreatedIdentity = await browser.execute((element) => {
-      const original = (window as Window & { __tabbedOriginalBase?: HTMLElement })
-        .__tabbedOriginalBase;
-      return {
-        differsFromOriginal: original !== element,
-        isConnected: element.isConnected,
-      };
-    }, recreatedBaseElement);
-    expect(recreatedIdentity).toEqual({ differsFromOriginal: true, isConnected: true });
-
-    expect(await recreatedBase.getText()).not.toContain('Item 30');
-    const scrollEvidence: ScrollEvidence = await browser.execute((element): ScrollEvidence => {
-      const candidates = new Set<HTMLElement>();
-      for (
-        let candidate: HTMLElement | null = element;
-        candidate !== null;
-        candidate = candidate.parentElement
-      ) {
-        candidates.add(candidate);
-      }
-      if (document.scrollingElement instanceof HTMLElement) {
-        candidates.add(document.scrollingElement);
-      }
-
-      for (const candidate of candidates) {
-        const originalScrollTop = candidate.scrollTop;
-        candidate.scrollTop = 0;
-        const before = candidate.scrollTop;
-        candidate.scrollTop = candidate.scrollHeight;
-        const after = candidate.scrollTop;
-        if (after > before) {
-          candidate.dispatchEvent(new Event('scroll', { bubbles: true }));
-          return {
-            moved: true,
-            before,
-            after,
-            clientHeight: candidate.clientHeight,
-            scrollHeight: candidate.scrollHeight,
-          };
-        }
-        candidate.scrollTop = originalScrollTop;
-      }
-
-      return { moved: false };
-    }, recreatedBaseElement);
-    expect(scrollEvidence.moved).toBe(true);
-    await expect(recreatedBase).toHaveText(expect.stringContaining('Item 30'));
-    await browser.execute(() => {
-      delete (window as Window & { __tabbedOriginalBase?: HTMLElement }).__tabbedOriginalBase;
-    });
+    await replaceActiveNote(FIXTURE);
+    await browser.waitUntil(async () => (await visibleElements('.tabbed')).length === 1);
+    const restored = await rootAt(0);
+    expect(await panels(restored)).toHaveLength(1);
+    await expect(await activePanel(restored)).toHaveText(
+      expect.stringContaining('Items Base positive control.'),
+    );
+    expect(await restored.$$('.tabbed').length).toBe(0);
   });
 
   it('saves a modal edit, persists the rendered title, and restores it with Undo', async () => {

@@ -152,7 +152,6 @@ describe('ColumnsBlock responsive lifecycle', () => {
     const children = Array.from(grid.children);
     const toggle = vi.spyOn(root.classList, 'toggle');
     expect(harness.environment.createResizeObserver).toHaveBeenCalledOnce();
-    expect(harness.observer.observe).toHaveBeenCalledExactlyOnceWith(root);
     harness.notify(593);
     harness.notify(591);
     expect(harness.frames.size).toBe(1);

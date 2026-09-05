@@ -200,6 +200,11 @@
   min-width: 0;
 }
 
+.tabbed-columns > [class~='tabbed-columns__measure'] {
+  height: 0;
+  overflow: hidden;
+}
+
 .tabbed-columns.is-stacked > [class~='tabbed-columns__grid'] {
   grid-template-columns: minmax(0, 1fr) !important;
 }

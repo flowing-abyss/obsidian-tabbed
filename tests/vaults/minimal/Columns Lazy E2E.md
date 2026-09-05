@@ -6,6 +6,7 @@ tab: Plain
 Plain first body.
 tab: Columns
 ````columns
+stack
 column:
 Lazy first.
 column:

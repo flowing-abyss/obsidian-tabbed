@@ -9,6 +9,7 @@ let preparedNote: { path: string; original: string } | undefined;
 interface ColumnsTestWindow extends Window {
   __columnsErrors?: string[];
   __columnsRestoreConsole?: () => void;
+  __columnsCached?: { base: HTMLElement; columns: HTMLElement };
 }
 
 function required<T>(value: T | undefined): T {
@@ -110,6 +111,7 @@ describe('Columns in real Obsidian Reading view', () => {
         const captured = target.__columnsErrors ?? [];
         delete target.__columnsErrors;
         delete target.__columnsRestoreConsole;
+        delete target.__columnsCached;
         return captured;
       });
       expect(errors).toEqual([]);
@@ -221,20 +223,20 @@ describe('Columns in real Obsidian Reading view', () => {
         await tab.getElement(),
       );
       await browser.keys('ArrowRight');
-      await expect(outer.$('.tabbed__panel')).toHaveText(
+      await expect(outer.$('.tabbed__panel.is-active')).toHaveText(
         expect.stringContaining('Nested first body.'),
       );
       await browser.waitUntil(() =>
         browser.execute(() => document.activeElement?.textContent === 'Nested two'),
       );
       await browser.keys('Enter');
-      await expect(outer.$('.tabbed__panel')).toHaveText(
+      await expect(outer.$('.tabbed__panel.is-active')).toHaveText(
         expect.stringContaining('Nested second body.'),
       );
     }
   });
 
-  it('mounts columns and Bases only in the active tab and detaches them on deactivation', async () => {
+  it('mounts columns and Bases on first visit and reuses them after deactivation', async () => {
     await openNote('Columns Lazy E2E.md');
     const outer = browser.$(`${preview} .tabbed`);
     await outer.waitForExist();
@@ -245,25 +247,135 @@ describe('Columns in real Obsidian Reading view', () => {
     await required(tabs[1]).click();
     await browser.waitUntil(async () => (await browser.$$(roots).length) === 1);
     const base = outer.$('.tabbed-columns .bases-embed');
+    const columns = await rootAt(0);
     await expect(base).toHaveText(expect.stringContaining('Item 01'));
     await browser.execute(
-      (element) => {
-        (window as Window & { __columnsBase?: HTMLElement }).__columnsBase = element;
+      (element, columnRoot) => {
+        (window as ColumnsTestWindow).__columnsCached = { base: element, columns: columnRoot };
       },
       await base.getElement(),
+      await columns.getElement(),
     );
     await required(tabs[0]).click();
-    await browser.waitUntil(async () => (await browser.$$(roots).length) === 0);
-    expect(await outer.$$('.bases-embed').length).toBe(0);
+    expect(await browser.$$(roots).length).toBe(1);
+    expect(await outer.$$('.bases-embed').length).toBe(1);
+    await expect(base).not.toBeDisplayed();
+    await expect(columns).not.toBeDisplayed();
     expect(
       await browser.execute(() => {
-        const original = (window as Window & { __columnsBase?: HTMLElement }).__columnsBase;
-        return original !== undefined && !original.isConnected && !document.contains(original);
+        const original = (window as ColumnsTestWindow).__columnsCached;
+        return original?.base.isConnected === true && original.columns.isConnected;
       }),
     ).toBe(true);
-    await browser.execute(() => {
-      delete (window as Window & { __columnsBase?: HTMLElement }).__columnsBase;
-    });
+    await required(tabs[1]).click();
+    expect(
+      await browser.execute(
+        (element) => {
+          const target = window as ColumnsTestWindow;
+          const original = target.__columnsCached;
+          if (original === undefined) throw new Error('Missing cached columns and Base');
+          const same =
+            original.base === element.querySelector<HTMLElement>('.bases-embed') &&
+            original.columns === element.querySelector<HTMLElement>('.tabbed-columns');
+          delete target.__columnsCached;
+          return same;
+        },
+        await outer.getElement(),
+      ),
+    ).toBe(true);
+    await expect(base).toBeDisplayed();
+    await expect(columns).toBeDisplayed();
+  });
+
+  it('settles hidden responsive columns before reveal in both directions and excludes focus', async () => {
+    await openNote('Columns Lazy E2E.md');
+    const outer = browser.$(`${preview} .tabbed`);
+    await outer.waitForExist();
+    const tabs = await outer.$$(':scope > .tabbed__list > .tabbed__tab').getElements();
+    const plainTab = required(tabs[0]);
+    const columnsTab = required(tabs[1]);
+    await columnsTab.click();
+    const columns = await rootAt(0);
+    const panel = outer.$(':scope > .tabbed__panels > .tabbed__panel.is-active');
+    const container = await outer.$(':scope > .tabbed__panels').getElement();
+    await setWidth(container, 900);
+    await waitStack(columns, false);
+    await browser.execute(
+      (element) => {
+        const probe = createEl('button');
+        probe.className = 'cache-focus-probe';
+        probe.textContent = 'Visible descendant probe';
+        probe.setCssProps({ visibility: 'visible' });
+        element.append(probe);
+      },
+      await panel.getElement(),
+    );
+
+    for (const [width, stacked] of [
+      [420, true],
+      [900, false],
+    ] as const) {
+      await plainTab.click();
+      await setWidth(container, width);
+      await waitStack(columns, stacked);
+      const hidden = await browser.execute(
+        (element, columnRoot) => {
+          const probe = element.querySelector<HTMLElement>('.cache-focus-probe');
+          if (probe === null) throw new Error('Missing visible descendant probe');
+          probe.focus();
+          return {
+            panelWidth: element.getBoundingClientRect().width,
+            columnsWidth: columnRoot.getBoundingClientRect().width,
+            opacity: getComputedStyle(element).opacity,
+            probeVisibility: getComputedStyle(probe).visibility,
+            focused: document.activeElement === probe,
+            connected: element.isConnected && columnRoot.isConnected,
+          };
+        },
+        await panel.getElement(),
+        await columns.getElement(),
+      );
+      expect(hidden).toMatchObject({
+        opacity: '0',
+        probeVisibility: 'visible',
+        focused: false,
+        connected: true,
+      });
+      expect(hidden.panelWidth).toBeGreaterThan(0);
+      expect(hidden.columnsWidth).toBeGreaterThan(0);
+      await expect(panel).not.toBeDisplayed();
+      await expect(panel.$('.cache-focus-probe')).not.toBeDisplayed();
+
+      const reveal = await browser.execute(
+        async (tab, columnRoot) => {
+          const sample = () => ({
+            active: columnRoot.closest('.tabbed__panel')?.classList.contains('is-active'),
+            stacked: columnRoot.classList.contains('is-stacked'),
+            width: columnRoot.getBoundingClientRect().width,
+          });
+          const frames: Array<ReturnType<typeof sample>> = [];
+          const painted = new Promise<void>((resolve) => {
+            const record = () => {
+              frames.push(sample());
+              if (frames.length === 3) resolve();
+              else window.requestAnimationFrame(record);
+            };
+            window.requestAnimationFrame(record);
+          });
+          tab.click();
+          const immediate = sample();
+          await painted;
+          return { immediate, frames };
+        },
+        await columnsTab.getElement(),
+        await columns.getElement(),
+      );
+      expect(reveal.frames).toHaveLength(3);
+      for (const sample of [reveal.immediate, ...reveal.frames]) {
+        expect(sample).toMatchObject({ active: true, stacked });
+        expect(sample.width).toBeGreaterThan(0);
+      }
+    }
   });
 
   it('leaves every columns fixture unchanged when disabled', async () => {
