@@ -1,5 +1,6 @@
 .tabbed {
   --tabbed-title-max-width: 18rem;
+  --tabbed-inner-radius: max(0px, calc(var(--radius-s) - var(--border-width)));
 
   display: flex;
   min-width: 0;
@@ -126,6 +127,26 @@
   max-height: var(--tabbed-content-max-height);
   padding: var(--tabbed-content-padding);
   overflow: auto;
+}
+
+.tabbed[class~='tabbed--top'] > [class~='tabbed__list'],
+.tabbed[class~='tabbed--bottom'] > [class~='tabbed__panels'] > [class~='tabbed__panel'].is-active {
+  border-radius: var(--tabbed-inner-radius) var(--tabbed-inner-radius) 0 0;
+}
+
+.tabbed[class~='tabbed--bottom'] > [class~='tabbed__list'],
+.tabbed[class~='tabbed--top'] > [class~='tabbed__panels'] > [class~='tabbed__panel'].is-active {
+  border-radius: 0 0 var(--tabbed-inner-radius) var(--tabbed-inner-radius);
+}
+
+.tabbed[class~='tabbed--left'] > [class~='tabbed__list'],
+.tabbed[class~='tabbed--right'] > [class~='tabbed__panels'] > [class~='tabbed__panel'].is-active {
+  border-radius: var(--tabbed-inner-radius) 0 0 var(--tabbed-inner-radius);
+}
+
+.tabbed[class~='tabbed--right'] > [class~='tabbed__list'],
+.tabbed[class~='tabbed--left'] > [class~='tabbed__panels'] > [class~='tabbed__panel'].is-active {
+  border-radius: 0 var(--tabbed-inner-radius) var(--tabbed-inner-radius) 0;
 }
 
 .tabbed > [class~='tabbed__panels'] > [class~='tabbed__panel']:not(.is-active) {

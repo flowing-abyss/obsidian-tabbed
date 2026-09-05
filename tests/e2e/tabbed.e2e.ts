@@ -327,6 +327,52 @@ describe('Tabbed in a real Obsidian vault', () => {
     }
   });
 
+  it('rounds only the outside title-strip and active-panel corners for every title side', async () => {
+    const outer = await rootAt(0);
+    const corners = await browser.execute(
+      (element) => {
+        element.setCssProps({ '--radius-s': '10px', '--border-width': '2px' });
+        const list = element.querySelector(':scope > .tabbed__list');
+        const panel = element.querySelector(':scope > .tabbed__panels > .tabbed__panel.is-active');
+        if (list === null || panel === null) throw new Error('Missing tab strip or active panel');
+        const radii = (target: Element): string[] => {
+          const style = getComputedStyle(target);
+          return [
+            style.borderTopLeftRadius,
+            style.borderTopRightRadius,
+            style.borderBottomRightRadius,
+            style.borderBottomLeftRadius,
+          ];
+        };
+        return ['top', 'bottom', 'left', 'right'].map((position) => {
+          element.classList.remove(
+            'tabbed--top',
+            'tabbed--bottom',
+            'tabbed--left',
+            'tabbed--right',
+          );
+          element.classList.add(`tabbed--${position}`);
+          return { position, list: radii(list), panel: radii(panel) };
+        });
+      },
+      await outer.getElement(),
+    );
+    expect(corners).toEqual([
+      { position: 'top', list: ['8px', '8px', '0px', '0px'], panel: ['0px', '0px', '8px', '8px'] },
+      {
+        position: 'bottom',
+        list: ['0px', '0px', '8px', '8px'],
+        panel: ['8px', '8px', '0px', '0px'],
+      },
+      { position: 'left', list: ['8px', '0px', '0px', '8px'], panel: ['0px', '8px', '8px', '0px'] },
+      {
+        position: 'right',
+        list: ['0px', '8px', '8px', '0px'],
+        panel: ['8px', '0px', '0px', '8px'],
+      },
+    ]);
+  });
+
   for (const mode of ['preview', 'source'] as const) {
     it(`keeps Base rows populated in the first reveal frames after a short tab in ${mode}`, async () => {
       await replaceActiveNote('Tabbed Cache E2E.md');
