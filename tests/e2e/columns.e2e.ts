@@ -4,6 +4,7 @@ import { obsidianPage } from 'wdio-obsidian-service';
 
 const preview = '.workspace-leaf.mod-active .markdown-preview-view';
 const roots = `${preview} .tabbed-columns`;
+let preparedNote: { path: string; original: string } | undefined;
 
 interface ColumnsTestWindow extends Window {
   __columnsErrors?: string[];
@@ -28,12 +29,27 @@ async function openNote(note: string): Promise<void> {
     const onError = (event: ErrorEvent) => {
       target.__columnsErrors?.push(event.message);
     };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      target.__columnsErrors?.push(String(event.reason));
+    };
     window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
     target.__columnsRestoreConsole = () => {
       console.error = original;
       window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
     };
   });
+  if (note === 'Columns E2E.md') {
+    const original = await obsidianPage.read(note);
+    preparedNote = { path: note, original };
+    const source = original.replace(
+      'column:\nEqual second.',
+      'column:\u0020\u0020\u0020\nEqual second.',
+    );
+    await obsidianPage.write(note, source);
+    expect(await obsidianPage.read(note)).toContain('column:   \nEqual second.');
+  }
   await obsidianPage.openFile(note);
   const mode = await browser.executeObsidian(({ app, obsidian }) =>
     app.workspace.getActiveViewOfType(obsidian.MarkdownView)?.getMode(),
@@ -87,18 +103,25 @@ async function waitStack(root: WebdriverIO.Element, stacked: boolean): Promise<v
 
 describe('Columns in real Obsidian Reading view', () => {
   afterEach(async () => {
-    const errors = await browser.execute(() => {
-      const target = window as ColumnsTestWindow;
-      target.__columnsRestoreConsole?.();
-      const captured = target.__columnsErrors ?? [];
-      delete target.__columnsErrors;
-      delete target.__columnsRestoreConsole;
-      return captured;
-    });
-    expect(errors).toEqual([]);
+    try {
+      const errors = await browser.execute(() => {
+        const target = window as ColumnsTestWindow;
+        target.__columnsRestoreConsole?.();
+        const captured = target.__columnsErrors ?? [];
+        delete target.__columnsErrors;
+        delete target.__columnsRestoreConsole;
+        return captured;
+      });
+      expect(errors).toEqual([]);
+    } finally {
+      const restore = preparedNote;
+      preparedNote = undefined;
+      if (restore !== undefined) await obsidianPage.write(restore.path, restore.original);
+    }
   });
   it('renders four scoped rows, Markdown titles/bodies, equal tracks, and weighted tracks', async () => {
     await openNote('Columns E2E.md');
+    expect(await obsidianPage.read('Columns E2E.md')).toContain('column:   \nEqual second.');
     await browser.waitUntil(async () => (await browser.$$(roots).length) === 4);
     const equal = await rootAt(0);
     expect(await equal.$$('.tabbed-columns__title').length).toBe(0);
@@ -238,9 +261,43 @@ describe('Columns in real Obsidian Reading view', () => {
     await browser.waitUntil(async () => (await browser.$$(roots).length) === 4);
     const notes = ['Columns E2E.md', 'Columns Nested E2E.md', 'Columns Lazy E2E.md'];
     const before = await Promise.all(notes.map((note) => obsidianPage.read(note)));
-    await obsidianPage.disablePlugin('tabbed');
-    const after = await Promise.all(notes.map((note) => obsidianPage.read(note)));
-    expect(after).toEqual(before);
-    await obsidianPage.enablePlugin('tabbed');
+    try {
+      await obsidianPage.disablePlugin('tabbed');
+      const after = await Promise.all(notes.map((note) => obsidianPage.read(note)));
+      expect(after).toEqual(before);
+    } finally {
+      await obsidianPage.enablePlugin('tabbed');
+    }
+  });
+
+  it('captures unhandled rejections without preventing default and removes the listener on restore', async () => {
+    await openNote('Columns Nested E2E.md');
+    const evidence = await browser.execute(() => {
+      const target = window as ColumnsTestWindow;
+      const event = new PromiseRejectionEvent('unhandledrejection', {
+        promise: Promise.resolve(),
+        reason: new Error('Columns capture probe'),
+        cancelable: true,
+      });
+      window.dispatchEvent(event);
+      const captured = target.__columnsErrors?.splice(0) ?? [];
+      target.__columnsRestoreConsole?.();
+      window.dispatchEvent(
+        new PromiseRejectionEvent('unhandledrejection', {
+          promise: Promise.resolve(),
+          reason: new Error('Detached capture probe'),
+        }),
+      );
+      return {
+        captured,
+        defaultPrevented: event.defaultPrevented,
+        afterRestore: target.__columnsErrors ?? [],
+      };
+    });
+    expect(evidence).toEqual({
+      captured: ['Error: Columns capture probe'],
+      defaultPrevented: false,
+      afterRestore: [],
+    });
   });
 });

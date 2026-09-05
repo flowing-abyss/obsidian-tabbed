@@ -1,10 +1,9 @@
 # Columns end-to-end fixture
 
-<!-- prettier-ignore -->
 ```columns
 column:
 Equal first.
-column:   
+column:
 Equal second.
 ```
 
