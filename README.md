@@ -21,6 +21,55 @@ Only the selected tab body is rendered.
 
 Tab titles support Markdown, and active tab bodies can contain any Markdown content, including nested `tabs` blocks.
 
+## Columns
+
+Create equal columns with a fenced `columns` block:
+
+```columns
+column:
+Left content.
+column:
+Right content.
+```
+
+Titles and weights are optional. Omitted weights are equal; use positive weights for proportions such as `2:1`:
+
+```columns
+column: Main
+weight: 2
+Main content.
+
+column: Context
+weight: 1
+Context content.
+```
+
+Narrow rows scroll horizontally by default. Put `stack` before the first column to stack vertically when narrow:
+
+```columns
+stack
+column:
+Left content.
+column:
+Right content.
+```
+
+Columns support Markdown, Bases, embeds and nested layouts. Inside tabs, use tilde fences for the inner columns:
+
+```tabs
+tab: Dashboard
+Full-width content.
+
+~~~columns
+column:
+Recent notes.
+column:
+More recent notes.
+~~~
+```
+
+Another enabled plugin using the `columns` fenced language may conflict.
+
 ## Options
 
 Put options before the first `tab: ` line, separated by commas or newlines:
