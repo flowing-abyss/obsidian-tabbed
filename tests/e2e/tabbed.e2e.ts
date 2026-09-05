@@ -327,6 +327,71 @@ describe('Tabbed in a real Obsidian vault', () => {
     }
   });
 
+  for (const mode of ['preview', 'source'] as const) {
+    it(`keeps Base rows populated in the first reveal frames after a short tab in ${mode}`, async () => {
+      await replaceActiveNote('Tabbed Cache E2E.md');
+      await browser.executeObsidian(async ({ app, obsidian }, targetMode) => {
+        const view = app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+        if (view === null) throw new Error('Missing Markdown view');
+        await view.leaf.setViewState({
+          type: 'markdown',
+          state: { file: 'Tabbed Cache E2E.md', mode: targetMode, source: false },
+        });
+      }, mode);
+      await browser.waitUntil(async () => (await visibleElements('.tabbed')).length > 0);
+      const outer = await rootAt(0);
+      const initialScrollHeight = await browser.execute(
+        (element) => {
+          element.setCssProps({ '--tabbed-content-max-height': '420px' });
+          element.scrollIntoView({ block: 'start' });
+          return element.closest('.markdown-preview-view, .cm-scroller')?.scrollHeight;
+        },
+        await outer.getElement(),
+      );
+      await clickTab(outer, 1);
+      const base = (await activePanel(outer)).$('.bases-embed');
+      await expect(base).toHaveText(expect.stringContaining('Item 01'));
+      const evidence = await browser.execute(
+        async (element) => {
+          const tabs = element.querySelectorAll<HTMLElement>(
+            ':scope > .tabbed__list > .tabbed__tab',
+          );
+          const dashboard = element.querySelector<HTMLElement>('.tabbed__panel.is-active');
+          const cachedBase = dashboard?.querySelector('.bases-embed');
+          if (dashboard === null || cachedBase === null || cachedBase === undefined) {
+            throw new Error('Missing cached dashboard');
+          }
+          tabs[0]?.click();
+          // Allow the real Base virtualizer to respond to the hidden geometry.
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
+          const hiddenHeight = dashboard.getBoundingClientRect().height;
+          tabs[1]?.click();
+          const frames: boolean[] = [];
+          for (let frame = 0; frame < 3; frame++) {
+            await new Promise<void>((resolve) => {
+              window.requestAnimationFrame(() => {
+                resolve();
+              });
+            });
+            frames.push(cachedBase.textContent.includes('Item 01'));
+          }
+          element.setCssProps({ '--tabbed-content-max-height': 'none' });
+          tabs[0]?.click();
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
+          const finalScrollHeight = element.closest(
+            '.markdown-preview-view, .cm-scroller',
+          )?.scrollHeight;
+          return { hiddenHeight, frames, finalScrollHeight };
+        },
+        await outer.getElement(),
+      );
+      expect(evidence.frames).toEqual([true, true, true]);
+      expect(evidence.hiddenHeight).toBe(420);
+      expect(initialScrollHeight).toBeGreaterThan(0);
+      expect(evidence.finalScrollHeight).toBe(initialScrollHeight);
+    });
+  }
+
   it('keeps identities during rapid switching and unloads every cached panel on navigation', async () => {
     const outer = await rootAt(0);
     await clickTab(outer, 0);

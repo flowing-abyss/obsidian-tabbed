@@ -3,7 +3,7 @@
 
   display: flex;
   min-width: 0;
-  overflow: hidden;
+  contain: layout;
   color: var(--text-normal);
   background: var(--background-primary);
   border: var(--border-width) solid transparent;
@@ -118,7 +118,6 @@
   flex: 1 1 auto;
   min-width: 0;
   max-height: var(--tabbed-content-max-height);
-  overflow: hidden;
 }
 
 .tabbed > [class~='tabbed__panel'],
@@ -131,7 +130,7 @@
 
 .tabbed > [class~='tabbed__panels'] > [class~='tabbed__panel']:not(.is-active) {
   position: absolute;
-  inset: 0;
+  inset: 0 0 auto;
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
