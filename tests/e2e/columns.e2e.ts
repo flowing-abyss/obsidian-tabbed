@@ -44,11 +44,11 @@ async function openNote(note: string): Promise<void> {
     const original = await obsidianPage.read(note);
     preparedNote = { path: note, original };
     const source = original.replace(
-      'column:\nEqual second.',
-      'column:\u0020\u0020\u0020\nEqual second.',
+      /column:(\r?\n)Equal second\./,
+      'column:\u0020\u0020\u0020$1Equal second.',
     );
     await obsidianPage.write(note, source);
-    expect(await obsidianPage.read(note)).toContain('column:   \nEqual second.');
+    expect(await obsidianPage.read(note)).toMatch(/column: {3}\r?\nEqual second\./);
   }
   await obsidianPage.openFile(note);
   const mode = await browser.executeObsidian(({ app, obsidian }) =>
@@ -121,7 +121,7 @@ describe('Columns in real Obsidian Reading view', () => {
   });
   it('renders four scoped rows, Markdown titles/bodies, equal tracks, and weighted tracks', async () => {
     await openNote('Columns E2E.md');
-    expect(await obsidianPage.read('Columns E2E.md')).toContain('column:   \nEqual second.');
+    expect(await obsidianPage.read('Columns E2E.md')).toMatch(/column: {3}\r?\nEqual second\./);
     await browser.waitUntil(async () => (await browser.$$(roots).length) === 4);
     const equal = await rootAt(0);
     expect(await equal.$$('.tabbed-columns__title').length).toBe(0);
@@ -157,14 +157,24 @@ describe('Columns in real Obsidian Reading view', () => {
     if (!browser.isMobile) {
       await browser.execute(
         (element) => {
-          element.scrollLeft = 0;
-          element.focus();
+          element.scrollIntoView({ block: 'center', inline: 'nearest' });
         },
         await scroll.getElement(),
       );
+      await scroll.waitForDisplayed({ withinViewport: true });
+      const focused = await browser.execute(
+        (element) => {
+          element.focus();
+          element.scrollLeft = 0;
+          return document.activeElement === element;
+        },
+        await scroll.getElement(),
+      );
+      expect(focused).toBe(true);
       await browser.keys('ArrowRight');
-      await browser.waitUntil(async () =>
-        browser.execute((element) => element.scrollLeft > 0, await scroll.getElement()),
+      await browser.waitUntil(
+        async () => browser.execute((element) => element.scrollLeft > 0, await scroll.getElement()),
+        { timeoutMsg: 'Focused overflowing columns root did not scroll with ArrowRight' },
       );
     }
     const stack = await rootAt(3);
