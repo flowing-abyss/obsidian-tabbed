@@ -1,8 +1,8 @@
-import type {
+import {
   Component,
-  MarkdownPostProcessorContext,
-  MarkdownSectionInformation,
-  App as ObsidianApp,
+  type MarkdownPostProcessorContext,
+  type MarkdownSectionInformation,
+  type App as ObsidianApp,
 } from 'obsidian';
 import { App, MarkdownView } from 'obsidian-test-mocks/obsidian';
 import { describe, expect, it, vi } from 'vitest';
@@ -10,7 +10,7 @@ import { DEFAULT_SETTINGS, type TabbedSettings } from '../settings.js';
 import { SelectionMemory } from '../tabs/selection-memory.js';
 import type { ParsedTabsDocument } from '../tabs/tab-model.js';
 import { parseTabsSource } from '../tabs/tab-parser.js';
-import type { RenderMarkdown } from './tab-body.js';
+import type { RenderMarkdown } from './markdown-renderer.js';
 import { TabsBlock, type TabsBlockHost } from './tabs-block.js';
 
 const twoTabs = ['tab: First', 'first body', 'tab: Second', 'second body'].join('\n');
@@ -160,6 +160,19 @@ function required<T>(value: T | null | undefined, message: string): T {
     throw new Error(message);
   }
   return value;
+}
+
+class CleanupChild extends Component {
+  loads = 0;
+  unloads = 0;
+
+  override onload(): void {
+    this.loads += 1;
+  }
+
+  override onunload(): void {
+    this.unloads += 1;
+  }
 }
 
 function registrationTarget(
@@ -335,6 +348,38 @@ describe('TabsBlock body lifecycle', () => {
     expect(container.querySelector('.tabbed__panel')?.textContent).toBe('second body');
   });
 
+  it('cleans up resources registered after a stale body render resolves', async () => {
+    const first = deferred();
+    const lateCleanup = vi.fn();
+    const lateChild = new CleanupChild();
+    const renderer = vi.fn<RenderMarkdown>((...[_app, markdown, element, _path, component]) => {
+      if (!element.matches('.tabbed__panel')) {
+        return Promise.resolve();
+      }
+      if (markdown.startsWith('second')) {
+        element.textContent = 'Current second';
+        return Promise.resolve();
+      }
+      return first.promise.then(() => {
+        component.register(lateCleanup);
+        component.addChild(lateChild);
+        element.textContent = 'Stale first';
+      });
+    });
+    const { block, container } = createBlock(renderer);
+
+    await block.activate(1);
+    first.resolve();
+    await settle();
+
+    expect(lateCleanup).toHaveBeenCalledOnce();
+    expect(lateChild.loads).toBe(1);
+    expect(lateChild.unloads).toBe(1);
+    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(1);
+    expect(container.querySelector('.tabbed__panel')?.textContent).toBe('Current second');
+    block.unload();
+  });
+
   it('logs each current body rejection exactly once and keeps an empty panel', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const renderer = vi.fn<RenderMarkdown>(async (_app, markdown, element) => {
@@ -383,6 +428,42 @@ describe('TabsBlock body lifecycle', () => {
     });
     expect(container.querySelector('.tabbed__title')?.childElementCount).toBe(0);
     expect(container.querySelectorAll('[role="status"], .error, .is-error')).toHaveLength(0);
+  });
+
+  it('cleans up resources registered after a stale title render resolves', async () => {
+    const firstTitle = deferred();
+    const lateCleanup = vi.fn();
+    const lateChild = new CleanupChild();
+    const renderer = vi.fn<RenderMarkdown>((...[_app, markdown, element, _path, component]) => {
+      if (!element.matches('.tabbed__title')) {
+        return Promise.resolve();
+      }
+      if (markdown !== 'First') {
+        element.textContent = markdown;
+        return Promise.resolve();
+      }
+      return firstTitle.promise.then(() => {
+        component.register(lateCleanup);
+        component.addChild(lateChild);
+        element.textContent = 'Stale first';
+      });
+    });
+    const { block, container } = createBlock(renderer);
+
+    await block.applySettings({
+      ...DEFAULT_SETTINGS,
+      separator: ':: ',
+      defaultTitle: 'Current fallback',
+    });
+    firstTitle.resolve();
+    await settle();
+
+    expect(lateCleanup).toHaveBeenCalledOnce();
+    expect(lateChild.loads).toBe(1);
+    expect(lateChild.unloads).toBe(1);
+    expect(container.querySelectorAll('.tabbed__title')).toHaveLength(1);
+    expect(container.querySelector('.tabbed__title')?.textContent).toBe('Current fallback');
+    block.unload();
   });
 
   it('removes the body, root, and nearest host marker and unregisters once on unload', () => {

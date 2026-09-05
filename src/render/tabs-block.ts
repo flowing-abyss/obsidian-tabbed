@@ -14,7 +14,9 @@ import type { SelectionMemory } from '../tabs/selection-memory.js';
 import type { ParsedTabsDocument } from '../tabs/tab-model.js';
 import { literalTabsDocument, parseTabsSource } from '../tabs/tab-parser.js';
 import { findOwningMarkdownView } from './find-owning-view.js';
-import { TabBody, renderMarkdown, type RenderMarkdown } from './tab-body.js';
+import { renderMarkdown, type RenderMarkdown } from './markdown-renderer.js';
+import { RenderScope } from './render-scope.js';
+import { TabBody } from './tab-body.js';
 
 export interface TabsBlockHost {
   register(block: TabsBlock): void;
@@ -54,7 +56,7 @@ export class TabsBlock extends MarkdownRenderChild {
   private sectionLine: number | null = null;
   private locatorValue: SourceLocator | null = null;
   private tabs: HTMLElement[] = [];
-  private titleChildren: Component[] = [];
+  private titleChildren: RenderScope[] = [];
   private body: TabBody | null = null;
   private mutationInteractions: Component | null = null;
   private generation = 0;
@@ -334,7 +336,7 @@ export class TabsBlock extends MarkdownRenderChild {
         },
       });
       const title = button.createSpan({ cls: 'tabbed__title' });
-      const child = this.addChild(new Component());
+      const child = this.addChild(new RenderScope());
       this.titleChildren.push(child);
       this.renderTitle(tab.title, title, child, index).catch((error: unknown) => {
         logError('Could not finish rendering tab title', this.errorContext(index, error));
@@ -373,7 +375,7 @@ export class TabsBlock extends MarkdownRenderChild {
   private async renderTitle(
     markdown: string,
     titleEl: HTMLElement,
-    child: Component,
+    child: RenderScope,
     index: number,
   ): Promise<void> {
     try {

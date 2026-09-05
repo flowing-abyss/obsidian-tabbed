@@ -1,7 +1,8 @@
 import { MarkdownRenderer } from 'obsidian';
 import { App } from 'obsidian-test-mocks/obsidian';
 import { describe, expect, it, vi } from 'vitest';
-import { TabBody, renderMarkdown, type RenderMarkdown } from './tab-body.js';
+import { renderMarkdown, type RenderMarkdown } from './markdown-renderer.js';
+import { TabBody } from './tab-body.js';
 
 describe('renderMarkdown', () => {
   it('delegates to the public five-argument MarkdownRenderer.render API', async () => {

@@ -1,4 +1,5 @@
 import type { TabbedSettings } from '../settings.js';
+import { scanLines, type Line } from '../source/fenced-lines.js';
 import type {
   FenceDescriptor,
   FenceMarker,
@@ -6,7 +7,7 @@ import type {
   ParsedTabsDocument,
   SourceRange,
 } from './tab-model.js';
-import { parseTabsSourceWithSettings, scanLines, type Line } from './tab-parser-internal.js';
+import { parseTabsSourceWithSettings } from './tab-parser-internal.js';
 
 function range(from: number, to: number): SourceRange {
   return { from, to };

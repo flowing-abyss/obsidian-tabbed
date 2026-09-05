@@ -1,18 +1,8 @@
-import { Component, MarkdownRenderer, type App } from 'obsidian';
+import type { App } from 'obsidian';
+import { renderMarkdown, type RenderMarkdown } from './markdown-renderer.js';
+import { RenderScope } from './render-scope.js';
 
-export type RenderMarkdown = (
-  ...args: [
-    app: App,
-    markdown: string,
-    element: HTMLElement,
-    sourcePath: string,
-    component: Component,
-  ]
-) => Promise<void>;
-
-export const renderMarkdown: RenderMarkdown = (...args) => MarkdownRenderer.render(...args);
-
-export class TabBody extends Component {
+export class TabBody extends RenderScope {
   private readonly app: App;
   readonly panelEl: HTMLElement;
   private readonly markdown: string;
