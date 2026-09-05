@@ -1,4 +1,4 @@
-export type FenceMarker = '`' | '~';
+type FenceMarker = '`' | '~';
 
 export interface Line {
   readonly from: number;
