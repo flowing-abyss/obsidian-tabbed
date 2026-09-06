@@ -3,7 +3,8 @@
 [![Available in Obsidian](https://img.shields.io/badge/Available%20in%20Obsidian-7C3AED?logo=obsidian&logoColor=white&style=flat-square)](https://obsidian.md/plugins?id=tabbed)
 [![Release](https://github.com/flowing-abyss/obsidian-tabbed/actions/workflows/release.yml/badge.svg)](https://github.com/flowing-abyss/obsidian-tabbed/actions/workflows/release.yml)
 [![Downloads](https://img.shields.io/github/downloads/flowing-abyss/obsidian-tabbed/total?style=flat-square&label=downloads&color=blue)](https://github.com/flowing-abyss/obsidian-tabbed/releases)
-![Tabbed](assets/banner.png)
+
+![Tabbed showcase](assets/field-atlas-tabs.gif)
 
 Create accessible, lazy-loading tabs for Markdown content in Obsidian. Only the active tab body is rendered, so Bases, embeds, media and nested tabs load on demand. Works on desktop and mobile.
 
