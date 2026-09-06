@@ -10,8 +10,9 @@ Create accessible, lazy-loading tabs for Markdown content in Obsidian. Only the 
 
 ## Usage
 
-Create a fenced `tabs` block. A line beginning with `tab: ` starts a new tab:
+Copy this block into a note:
 
+````markdown
 ```tabs
 tab: Preview
 This tab contains **Markdown**.
@@ -19,6 +20,7 @@ This tab contains **Markdown**.
 tab: Details
 Only the selected tab body is rendered.
 ```
+````
 
 Tab titles support Markdown, and active tab bodies can contain any Markdown content, including nested `tabs` blocks.
 
