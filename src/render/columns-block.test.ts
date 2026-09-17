@@ -304,8 +304,8 @@ describe('ColumnsBlock visible rendering', () => {
     await settle();
 
     const root = element(container, '.tabbed-columns');
-    expect(root.getAttribute('role')).toBe('region');
-    expect(root.getAttribute('aria-label')).toBe('Columns');
+    expect(root.hasAttribute('role')).toBe(false);
+    expect(root.hasAttribute('aria-label')).toBe(false);
     expect(root.tabIndex).toBe(0);
     const grid = element(root, ':scope > .tabbed-columns__grid');
     expect(grid.style.gridTemplateColumns).toBe(

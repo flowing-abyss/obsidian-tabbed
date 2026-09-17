@@ -80,7 +80,7 @@ export class ColumnsBlock extends MarkdownRenderChild {
     this.parsedDocument = this.parseDocument(source, parser);
     this.rootEl = containerEl.createDiv({
       cls: 'tabbed-columns',
-      attr: { role: 'region', 'aria-label': 'Columns', tabindex: '0' },
+      attr: { tabindex: '0' },
     });
     this.gridEl = this.rootEl.createDiv({ cls: 'tabbed-columns__grid' });
   }
