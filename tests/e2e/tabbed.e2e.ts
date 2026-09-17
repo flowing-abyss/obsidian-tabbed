@@ -13,6 +13,7 @@ interface CacheTestWindow extends Window {
   };
   __tabbedErrors?: string[];
   __tabbedRestoreConsole?: () => void;
+  __tabbedLimitCache?: Record<number, HTMLElement>;
 }
 
 async function openFixture(): Promise<void> {
@@ -122,6 +123,7 @@ describe('Tabbed in a real Obsidian vault', () => {
       delete target.__tabbedCache;
       delete target.__tabbedErrors;
       delete target.__tabbedRestoreConsole;
+      delete target.__tabbedLimitCache;
       return captured;
     });
     expect(errors).toEqual([]);
@@ -544,17 +546,43 @@ describe('Tabbed in a real Obsidian vault', () => {
         root,
       );
 
-    const panelAt = async (
-      root: WebdriverIO.Element,
-      index: number,
-    ): Promise<WebdriverIO.Element> => {
-      const matches = await root
-        .$$(`:scope > .tabbed__panels > .tabbed__panel[data-tab-index="${index}"]`)
-        .getElements();
-      const panel = matches[0];
-      if (panel === undefined) throw new Error(`Expected panel for tab ${index}`);
-      return panel;
-    };
+    // Cache a panel's live DOM node on `window`, keyed by tab index, the same
+    // way `keeps identities during rapid switching…` caches nodes to compare
+    // later without ever round-tripping a (possibly stale) element handle
+    // back through the WebDriver element-argument protocol.
+    const captureLimitPanel = (root: WebdriverIO.Element, index: number): Promise<void> =>
+      browser.execute(
+        (element, tabIndex) => {
+          const target = window as CacheTestWindow;
+          target.__tabbedLimitCache ??= {};
+          const panel = element.querySelector<HTMLElement>(
+            `:scope > .tabbed__panels > .tabbed__panel[data-tab-index="${tabIndex}"]`,
+          );
+          if (panel === null) throw new Error(`Missing panel for tab ${tabIndex}`);
+          target.__tabbedLimitCache[tabIndex] = panel;
+        },
+        root,
+        index,
+      );
+
+    const cachedPanelConnected = (index: number): Promise<boolean> =>
+      browser.execute((tabIndex) => {
+        const cached = (window as CacheTestWindow).__tabbedLimitCache?.[tabIndex];
+        return cached?.isConnected === true;
+      }, index);
+
+    const cachedPanelIsActive = (root: WebdriverIO.Element, index: number): Promise<boolean> =>
+      browser.execute(
+        (element, tabIndex) => {
+          const cached = (window as CacheTestWindow).__tabbedLimitCache?.[tabIndex];
+          const active = element.querySelector<HTMLElement>(
+            ':scope > .tabbed__panels > .tabbed__panel.is-active',
+          );
+          return cached !== undefined && cached === active;
+        },
+        root,
+        index,
+      );
 
     try {
       await setLimit(2);
@@ -562,41 +590,47 @@ describe('Tabbed in a real Obsidian vault', () => {
       await browser.waitUntil(async () => (await visibleElements('.tabbed')).length > 0);
       const root = await rootAt(0);
       await expect(await activePanel(root)).toHaveText(expect.stringContaining('Limit body one.'));
+      // Capture tab 0's panel before any eviction, so a later check can prove
+      // returning to it renders a brand-new element rather than reusing this one.
+      await captureLimitPanel(root, 0);
 
       await clickTab(root, 1);
       await clickTab(root, 2);
       await expect(await activePanel(root)).toHaveText(
         expect.stringContaining('Limit body three.'),
       );
-      // Element handles bound to the shared `.is-active` selector re-resolve to
-      // whichever panel is active when re-queried, so capture the tab-2 panel by
-      // its stable `data-tab-index` instead of reusing an `.is-active` handle.
-      const thirdPanelElement = await (await panelAt(root, 2)).getElement();
+      // Capture tab 2's panel right after it becomes active, before any further
+      // switching, so later checks can prove it stays the same element.
+      await captureLimitPanel(root, 2);
 
       // Activating tab 2 pushed the block past the limit (2) and evicted the
       // least recently activated non-active body: tab 0.
       expect(await connectedIndexes(root)).toEqual(['1', '2']);
+      expect(await cachedPanelConnected(0)).toBe(false);
       await expectOneActivePanelPerRoot();
+
+      // Capture tab 1's panel too, right before switching away from it, so we
+      // can confirm switching within the limit reuses both bodies' elements.
+      await captureLimitPanel(root, 1);
 
       // Re-visiting tabs already within the limit must not evict or recreate
       // their bodies.
       await clickTab(root, 1);
+      expect(await cachedPanelIsActive(root, 1)).toBe(true);
       await clickTab(root, 2);
-      const thirdPanelReused = await browser.execute(
-        (element, cached) =>
-          element.querySelector(':scope > .tabbed__panels > .tabbed__panel.is-active') === cached,
-        await root.getElement(),
-        thirdPanelElement,
-      );
-      expect(thirdPanelReused).toBe(true);
+      expect(await cachedPanelIsActive(root, 2)).toBe(true);
+      expect(await cachedPanelConnected(1)).toBe(true);
       expect(await connectedIndexes(root)).toEqual(['1', '2']);
 
       await clickTab(root, 0);
       const returned = await activePanel(root);
       await expect(returned).toHaveText(expect.stringContaining('Limit body one.'));
-      // Returning to tab 0 re-renders its body and evicts the now least
-      // recently activated non-active body: tab 1.
+      // Returning to tab 0 re-renders its body in a brand-new element — the
+      // originally captured node stays disconnected — and evicts the now
+      // least recently activated non-active body: tab 1.
       expect(await connectedIndexes(root)).toEqual(['0', '2']);
+      expect(await cachedPanelIsActive(root, 0)).toBe(false);
+      expect(await cachedPanelConnected(0)).toBe(false);
 
       await setLimit(1);
       // Lowering the limit evicts immediately: only the active body survives.
