@@ -23,6 +23,7 @@ const threeTabs = [
   'tab: Third',
   'third body',
 ].join('\n');
+const fourTabs = [threeTabs, 'tab: Fourth', 'fourth body'].join('\n');
 
 it('keeps nested columns and sibling resources live until block unload', async () => {
   const log = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1627,6 +1628,258 @@ describe('TabsBlock selection memory and settings', () => {
     expect(bodies).toStrictEqual(['first body\n', 'first body\n']);
     expect(container.querySelector('.tabbed__panel')).not.toBe(oldPanel);
     expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(1);
+    block.unload();
+  });
+});
+
+describe('TabsBlock live body limit', () => {
+  const limited = (maxLiveTabBodies: number): TabbedSettings => ({
+    ...DEFAULT_SETTINGS,
+    maxLiveTabBodies,
+  });
+  const bodyRenders = (renderer: ReturnType<typeof vi.fn<RenderMarkdown>>): string[] =>
+    renderer.mock.calls
+      .filter(([, , element]) => element.matches('.tabbed__panel'))
+      .map(([, markdown]) => markdown.trim());
+  const panelIndexes = (container: HTMLElement): string[] =>
+    Array.from(container.querySelectorAll<HTMLElement>('.tabbed__panel')).map(
+      (panel) => panel.dataset['tabIndex'] ?? '',
+    );
+  const panelAt = (container: HTMLElement, index: number): HTMLElement =>
+    required(
+      container.querySelector<HTMLElement>(`.tabbed__panel[data-tab-index="${index}"]`),
+      `Expected panel ${index}`,
+    );
+
+  it('unloads the least recently used body once and removes its panel', async () => {
+    const cleanups = new Map<string, ReturnType<typeof vi.fn>>();
+    const renderer = vi.fn<RenderMarkdown>(async (...[, markdown, element, , scope]) => {
+      if (!element.matches('.tabbed__panel')) return;
+      const cleanup = vi.fn();
+      cleanups.set(markdown.trim(), cleanup);
+      scope.register(cleanup);
+    });
+    const { block, container } = createBlock(renderer, threeTabs, { settings: limited(2) });
+    await settle();
+    const firstPanel = panelAt(container, 0);
+    await block.activate(1);
+    await block.activate(2);
+
+    expect(cleanups.get('first body')).toHaveBeenCalledOnce();
+    expect(cleanups.get('second body')).not.toHaveBeenCalled();
+    expect(firstPanel.isConnected).toBe(false);
+    expect(panelIndexes(container)).toEqual(['1', '2']);
+    block.unload();
+  });
+
+  it('evicts by recency of activation, not by first visit', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { block, container } = createBlock(renderer, threeTabs, { settings: limited(2) });
+    await block.activate(1);
+    await block.activate(0);
+    await block.activate(2);
+
+    expect(panelIndexes(container)).toEqual(['0', '2']);
+    block.unload();
+  });
+
+  it('renders an evicted tab again in a new panel inserted in tab order', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { block, container } = createBlock(renderer, threeTabs, { settings: limited(2) });
+    const original = panelAt(container, 0);
+    await block.activate(1);
+    await block.activate(2);
+    await block.activate(0);
+
+    expect(bodyRenders(renderer)).toEqual([
+      'first body',
+      'second body',
+      'third body',
+      'first body',
+    ]);
+    expect(panelAt(container, 0)).not.toBe(original);
+    expect(panelIndexes(container)).toEqual(['0', '2']);
+    expect(container.querySelector<HTMLElement>('.tabbed__panel.is-active')).toBe(
+      panelAt(container, 0),
+    );
+    block.unload();
+  });
+
+  it('keeps only the active body with limit 1', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { block, container } = createBlock(renderer, threeTabs, { settings: limited(1) });
+    for (const index of [1, 2, 0]) {
+      await block.activate(index);
+      expect(panelIndexes(container)).toEqual([String(index)]);
+    }
+    expect(bodyRenders(renderer)).toHaveLength(4);
+    block.unload();
+  });
+
+  it.each([0, 4, 100])('never evicts with limit %s and four tabs', async (limit) => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { block, container } = createBlock(renderer, fourTabs, { settings: limited(limit) });
+    for (const index of [1, 2, 3, 0, 1, 2, 3]) await block.activate(index);
+
+    expect(panelIndexes(container)).toEqual(['0', '1', '2', '3']);
+    expect(bodyRenders(renderer)).toHaveLength(4);
+    block.unload();
+  });
+
+  it('keeps identities and never rerenders while ping-ponging within the limit', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { block, container } = createBlock(renderer, threeTabs, { settings: limited(2) });
+    await block.activate(1);
+    const panels = [panelAt(container, 0), panelAt(container, 1)];
+    for (const index of [0, 1, 0, 1, 0]) await block.activate(index);
+
+    expect(bodyRenders(renderer)).toHaveLength(2);
+    expect([panelAt(container, 0), panelAt(container, 1)]).toEqual(panels);
+    block.unload();
+  });
+
+  it('evicts a pending body quietly and ignores its late completion', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const first = deferred();
+    const renderer = vi.fn<RenderMarkdown>((...[, markdown, element]) => {
+      if (!element.matches('.tabbed__panel')) return Promise.resolve();
+      if (markdown.trim() !== 'first body') return Promise.resolve();
+      return first.promise.then(() => {
+        element.textContent = 'Late first';
+      });
+    });
+    const { block, container } = createBlock(renderer, threeTabs, { settings: limited(1) });
+    const pendingPanel = panelAt(container, 0);
+    await block.activate(1);
+
+    expect(pendingPanel.isConnected).toBe(false);
+    first.reject(new Error('late failure'));
+    await settle();
+
+    expect(log).not.toHaveBeenCalled();
+    expect(panelIndexes(container)).toEqual(['1']);
+    expect(block.selectedIndex).toBe(1);
+    block.unload();
+    log.mockRestore();
+  });
+
+  it('counts a failed entry toward the limit and renders it again after eviction', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let failFirst = true;
+    const renderer = vi.fn<RenderMarkdown>(async (...[, markdown, element]) => {
+      if (element.matches('.tabbed__panel') && markdown.trim() === 'first body' && failFirst) {
+        failFirst = false;
+        throw new Error('first failed');
+      }
+    });
+    const { block, container } = createBlock(renderer, threeTabs, { settings: limited(2) });
+    await settle();
+    await block.activate(1);
+    expect(panelIndexes(container)).toEqual(['0', '1']);
+    await block.activate(2);
+    expect(panelIndexes(container)).toEqual(['1', '2']);
+    await block.activate(0);
+
+    expect(bodyRenders(renderer).filter((body) => body === 'first body')).toHaveLength(2);
+    expect(log).toHaveBeenCalledOnce();
+    block.unload();
+    log.mockRestore();
+  });
+
+  it('applies a lowered limit immediately without rerendering and ignores a raised one', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { block, container } = createBlock(renderer, fourTabs, { settings: limited(0) });
+    for (const index of [1, 2, 3]) await block.activate(index);
+    const active = panelAt(container, 3);
+
+    await block.applySettings(limited(2));
+    expect(panelIndexes(container)).toEqual(['2', '3']);
+    expect(container.querySelector('.tabbed__panel.is-active')).toBe(active);
+
+    await block.applySettings(limited(1));
+    expect(panelIndexes(container)).toEqual(['3']);
+
+    await block.applySettings(limited(4));
+    expect(panelIndexes(container)).toEqual(['3']);
+    expect(bodyRenders(renderer)).toHaveLength(4);
+    block.unload();
+  });
+
+  it('survives a cleanup callback that unloads the block during eviction', async () => {
+    const cleanups: Array<ReturnType<typeof vi.fn>> = [];
+    const renderer = vi.fn<RenderMarkdown>(async (...[, markdown, element, , scope]) => {
+      if (!element.matches('.tabbed__panel')) return;
+      const cleanup = vi.fn(() => {
+        if (markdown.trim() === 'first body') block.unload();
+      });
+      cleanups.push(cleanup);
+      scope.register(cleanup);
+    });
+    const { block, container } = createBlock(renderer, threeTabs, { settings: limited(2) });
+    await settle();
+    await block.activate(1);
+    await block.activate(2);
+    await settle();
+
+    for (const cleanup of cleanups) expect(cleanup).toHaveBeenCalledOnce();
+    expect(container.querySelector('.tabbed')).toBeNull();
+    expect(bodyRenders(renderer)).toEqual(['first body', 'second body']);
+  });
+
+  it('never evicts a body that a cleanup callback reentrantly activates', async () => {
+    const renderer = vi.fn<RenderMarkdown>(async (...[, markdown, element, , scope]) => {
+      if (!element.matches('.tabbed__panel')) return;
+      if (markdown.trim() === 'first body') {
+        scope.register(() => block.activate(1));
+      }
+    });
+    const { block, container } = createBlock(renderer, fourTabs, { settings: limited(0) });
+    await settle();
+    for (const index of [1, 2, 3]) await block.activate(index);
+
+    // Candidates are tabs 0 and 1. Evicting tab 0 reentrantly activates tab 1,
+    // which must then survive the outer eviction loop. The nested pass evicts tab 2.
+    await block.applySettings(limited(2));
+    await settle();
+
+    expect(block.selectedIndex).toBe(1);
+    expect(panelIndexes(container)).toEqual(['1', '3']);
+    expect(container.querySelectorAll('.tabbed__panel.is-active')).toHaveLength(1);
+    expect(container.querySelector('.tabbed__panel.is-active')).toBe(panelAt(container, 1));
+    block.unload();
+  });
+
+  it('logs one throwing cleanup and still evicts the remaining bodies', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const renderer = vi.fn<RenderMarkdown>(async (...[, markdown, element, , scope]) => {
+      if (element.matches('.tabbed__panel') && markdown.trim() === 'first body') {
+        scope.register(() => {
+          throw new Error('cleanup failed');
+        });
+      }
+    });
+    const { block, container } = createBlock(renderer, fourTabs, { settings: limited(0) });
+    await settle();
+    for (const index of [1, 2, 3]) await block.activate(index);
+    await block.applySettings(limited(1));
+
+    expect(panelIndexes(container)).toEqual(['3']);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[tabbed] Could not clean up rendered Markdown', {
+      cause: 'cleanup failed',
+    });
+    block.unload();
+    log.mockRestore();
+  });
+
+  it('resets recency together with the cache on refresh', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { block, container } = createBlock(renderer, threeTabs, { settings: limited(2) });
+    await block.activate(1);
+    await block.refreshActiveBody();
+    expect(panelIndexes(container)).toEqual(['1']);
+    await block.activate(2);
+    // Only tab 1 and tab 2 are live; stale recency for tab 0 must not count.
+    expect(panelIndexes(container)).toEqual(['1', '2']);
     block.unload();
   });
 });

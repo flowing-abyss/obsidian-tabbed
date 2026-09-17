@@ -10,6 +10,7 @@ import { formatError, logError } from '../diagnostics.js';
 import type { TabbedSettings } from '../settings.js';
 import type { SourceMutationAuthority } from '../source/mutation-authority.js';
 import { SourceLocator } from '../source/source-locator.js';
+import { RecencyOrder } from '../tabs/recency-order.js';
 import type { SelectionMemory } from '../tabs/selection-memory.js';
 import type { ParsedTabsDocument } from '../tabs/tab-model.js';
 import { literalTabsDocument, parseTabsSource } from '../tabs/tab-parser.js';
@@ -79,6 +80,7 @@ export class TabsBlock extends MarkdownRenderChild {
   private tabs: HTMLElement[] = [];
   private titleChildren: RenderScope[] = [];
   private readonly bodyCache = new Map<number, CachedBodyEntry>();
+  private readonly bodyRecency = new RecencyOrder<number>();
   private readonly disposingBodies = new Set<CachedBodyEntry>();
   private readonly bodyCompletions = new Map<CachedBodyEntry, DeferredCompletion>();
   private readonly startedBodies = new Set<CachedBodyEntry>();
@@ -210,7 +212,11 @@ export class TabsBlock extends MarkdownRenderChild {
       this.updateTabState(null);
       return;
     }
+    this.bodyRecency.touch(entry.index);
     if (!this.setActiveBody(entry, generation)) return;
+    this.enforceBodyLimit();
+    // Eviction cleanup can synchronously activate another tab, refresh, or unload the block.
+    if (!this.isCurrentActivation(entry, generation)) return;
     this.startBodyRender(entry);
     await entry.renderPromise;
     if (this.isCurrentActivation(entry, generation)) {
@@ -235,6 +241,7 @@ export class TabsBlock extends MarkdownRenderChild {
 
     if (!syntaxChanged) {
       this.applyShell();
+      this.enforceBodyLimit();
       return;
     }
 
@@ -628,6 +635,7 @@ export class TabsBlock extends MarkdownRenderChild {
     this.bodyCache.clear();
     this.bodyCompletions.clear();
     this.startedBodies.clear();
+    this.bodyRecency.clear();
     // A cleanup callback may unload the block before this loop reaches its next body.
     // Reentrant clearing must release those pending children before native unload runs.
     for (const entry of this.disposingBodies) {
@@ -635,6 +643,31 @@ export class TabsBlock extends MarkdownRenderChild {
       this.disposeEntry(entry);
       entry.panelEl.remove();
     }
+  }
+
+  private enforceBodyLimit(): void {
+    const candidates = this.bodyRecency
+      .evictionCandidates(this.settings.maxLiveTabBodies, this.selection)
+      .map((index) => this.bodyCache.get(index))
+      .filter((entry): entry is CachedBodyEntry => entry !== undefined);
+    for (const entry of candidates) {
+      // A cleanup callback may unload the block, clear the cache, or select a candidate.
+      if (!this.isLive) return;
+      if (entry.index === this.selection || this.bodyCache.get(entry.index) !== entry) continue;
+      this.evictEntry(entry);
+    }
+  }
+
+  private evictEntry(entry: CachedBodyEntry): void {
+    const completion = this.bodyCompletions.get(entry);
+    this.bodyCache.delete(entry.index);
+    this.bodyCompletions.delete(entry);
+    this.startedBodies.delete(entry);
+    this.bodyRecency.delete(entry.index);
+    this.disposeEntry(entry);
+    entry.panelEl.remove();
+    // A pending render may never settle once its scope is unloaded; release its awaiters.
+    completion?.resolve();
   }
 
   private disposeEntry(entry: CachedBodyEntry): void {
