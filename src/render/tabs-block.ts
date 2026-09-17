@@ -216,6 +216,8 @@ export class TabsBlock extends MarkdownRenderChild {
     if (!this.setActiveBody(entry, generation)) return;
     this.enforceBodyLimit();
     // Eviction cleanup can synchronously activate another tab, refresh, or unload the block.
+    // If it does, this bails before rendering: the freshly created, still-unrendered entry
+    // is intentionally left cached, to be rendered by the next `activate` of that index.
     if (!this.isCurrentActivation(entry, generation)) return;
     this.startBodyRender(entry);
     await entry.renderPromise;

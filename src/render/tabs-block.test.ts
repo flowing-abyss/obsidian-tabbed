@@ -1650,6 +1650,38 @@ describe('TabsBlock live body limit', () => {
       container.querySelector<HTMLElement>(`.tabbed__panel[data-tab-index="${index}"]`),
       `Expected panel ${index}`,
     );
+  const setupNestedTabsBlock = async (): Promise<{
+    block: TabsBlock;
+    nestedHost: ReturnType<typeof host>;
+    nestedRoot: HTMLElement;
+  }> => {
+    const nestedHost = host();
+    const nestedRenderer: RenderMarkdown = async (...[, markdown, target]) => {
+      target.setText(markdown);
+    };
+    const renderer: RenderMarkdown = async (...[app, markdown, target, path, scope]) => {
+      if (markdown.trim() !== 'first body') return;
+      scope.addChild(
+        new TabsBlock(
+          app,
+          target,
+          'tab: Nested\nnested body',
+          context(path),
+          DEFAULT_SETTINGS,
+          new SelectionMemory(256),
+          nestedHost,
+          nestedRenderer,
+        ),
+      );
+    };
+    const { block, container } = createBlock(renderer, threeTabs, { settings: limited(2) });
+    await settle();
+    const nestedRoot = required(
+      container.querySelector<HTMLElement>('.tabbed__panel[data-tab-index="0"] .tabbed'),
+      'Expected the nested block root',
+    );
+    return { block, nestedHost, nestedRoot };
+  };
 
   it('unloads the least recently used body once and removes its panel', async () => {
     const cleanups = new Map<string, ReturnType<typeof vi.fn>>();
@@ -1669,6 +1701,39 @@ describe('TabsBlock live body limit', () => {
     expect(cleanups.get('second body')).not.toHaveBeenCalled();
     expect(firstPanel.isConnected).toBe(false);
     expect(panelIndexes(container)).toEqual(['1', '2']);
+    block.unload();
+  });
+
+  it('unloads a nested TabsBlock and unregisters it from its own host on eviction', async () => {
+    const { block, nestedHost, nestedRoot } = await setupNestedTabsBlock();
+    expect(nestedHost.register).toHaveBeenCalledTimes(1);
+    const registerOrder = required(
+      nestedHost.register.mock.invocationCallOrder[0],
+      'Expected a register call order',
+    );
+
+    await block.activate(1);
+    await block.activate(2);
+
+    expect(nestedHost.unregister).toHaveBeenCalledTimes(1);
+    const unregisterOrder = required(
+      nestedHost.unregister.mock.invocationCallOrder[0],
+      'Expected an unregister call order',
+    );
+    expect(registerOrder).toBeLessThan(unregisterOrder);
+    expect(nestedRoot.isConnected).toBe(false);
+    block.unload();
+  });
+
+  it('unloads a nested TabsBlock and unregisters it once when applySettings lowers the limit', async () => {
+    const { block, nestedHost, nestedRoot } = await setupNestedTabsBlock();
+    await block.activate(1);
+    expect(nestedHost.unregister).not.toHaveBeenCalled();
+
+    await block.applySettings(limited(1));
+
+    expect(nestedHost.unregister).toHaveBeenCalledTimes(1);
+    expect(nestedRoot.isConnected).toBe(false);
     block.unload();
   });
 
@@ -1738,7 +1803,40 @@ describe('TabsBlock live body limit', () => {
     block.unload();
   });
 
-  it('evicts a pending body quietly and ignores its late completion', async () => {
+  it('evicts a pending body quietly and leaves the connected DOM untouched when its late render resolves', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const first = deferred();
+    const renderer = vi.fn<RenderMarkdown>((...[, markdown, element]) => {
+      if (!element.matches('.tabbed__panel')) return Promise.resolve();
+      if (markdown.trim() !== 'first body') return Promise.resolve();
+      return first.promise.then(() => {
+        element.textContent = 'Late first';
+      });
+    });
+    const { block, container } = createBlock(renderer, threeTabs, { settings: limited(1) });
+    const pendingPanel = panelAt(container, 0);
+    await block.activate(1);
+
+    expect(pendingPanel.isConnected).toBe(false);
+    first.resolve();
+    await settle();
+
+    // The late `.then` did run (proving this isn't a vacuous check), but only
+    // touched the already-detached panel — the connected DOM and selection
+    // must be exactly as they were right after eviction.
+    expect(pendingPanel.textContent).toBe('Late first');
+    expect(pendingPanel.isConnected).toBe(false);
+    expect(log).not.toHaveBeenCalled();
+    expect(panelIndexes(container)).toEqual(['1']);
+    expect(
+      container.querySelector<HTMLElement>('.tabbed__panel.is-active')?.dataset['tabIndex'],
+    ).toBe('1');
+    expect(block.selectedIndex).toBe(1);
+    block.unload();
+    log.mockRestore();
+  });
+
+  it('evicts a pending body quietly and leaves the connected DOM untouched when its late render rejects', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const first = deferred();
     const renderer = vi.fn<RenderMarkdown>((...[, markdown, element]) => {
@@ -1758,6 +1856,9 @@ describe('TabsBlock live body limit', () => {
 
     expect(log).not.toHaveBeenCalled();
     expect(panelIndexes(container)).toEqual(['1']);
+    expect(
+      container.querySelector<HTMLElement>('.tabbed__panel.is-active')?.dataset['tabIndex'],
+    ).toBe('1');
     expect(block.selectedIndex).toBe(1);
     block.unload();
     log.mockRestore();
