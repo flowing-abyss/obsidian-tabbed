@@ -525,4 +525,85 @@ describe('Tabbed in a real Obsidian vault', () => {
       (await obsidianPage.read(FIXTURE)).includes('tab: Overview\n'),
     );
   });
+
+  it('unloads the least recently used body past the live tab limit and renders it again on return', async () => {
+    const setLimit = async (limit: number): Promise<void> => {
+      await browser.executeObsidian(async ({ app }, value) => {
+        const plugin = app.plugins.plugins['tabbed'];
+        if (plugin === undefined) throw new Error('Tabbed plugin is not loaded');
+        await plugin.updateSettings({ ...plugin.settings, maxLiveTabBodies: value });
+      }, limit);
+    };
+
+    const connectedIndexes = (root: WebdriverIO.Element): Promise<string[]> =>
+      browser.execute(
+        (element) =>
+          Array.from(
+            element.querySelectorAll<HTMLElement>(':scope > .tabbed__panels > .tabbed__panel'),
+          ).map((panel) => panel.dataset['tabIndex'] ?? ''),
+        root,
+      );
+
+    const panelAt = async (
+      root: WebdriverIO.Element,
+      index: number,
+    ): Promise<WebdriverIO.Element> => {
+      const matches = await root
+        .$$(`:scope > .tabbed__panels > .tabbed__panel[data-tab-index="${index}"]`)
+        .getElements();
+      const panel = matches[0];
+      if (panel === undefined) throw new Error(`Expected panel for tab ${index}`);
+      return panel;
+    };
+
+    try {
+      await setLimit(2);
+      await replaceActiveNote('Tabbed Limit E2E.md');
+      await browser.waitUntil(async () => (await visibleElements('.tabbed')).length > 0);
+      const root = await rootAt(0);
+      await expect(await activePanel(root)).toHaveText(expect.stringContaining('Limit body one.'));
+
+      await clickTab(root, 1);
+      await clickTab(root, 2);
+      await expect(await activePanel(root)).toHaveText(
+        expect.stringContaining('Limit body three.'),
+      );
+      // Element handles bound to the shared `.is-active` selector re-resolve to
+      // whichever panel is active when re-queried, so capture the tab-2 panel by
+      // its stable `data-tab-index` instead of reusing an `.is-active` handle.
+      const thirdPanelElement = await (await panelAt(root, 2)).getElement();
+
+      // Activating tab 2 pushed the block past the limit (2) and evicted the
+      // least recently activated non-active body: tab 0.
+      expect(await connectedIndexes(root)).toEqual(['1', '2']);
+      await expectOneActivePanelPerRoot();
+
+      // Re-visiting tabs already within the limit must not evict or recreate
+      // their bodies.
+      await clickTab(root, 1);
+      await clickTab(root, 2);
+      const thirdPanelReused = await browser.execute(
+        (element, cached) =>
+          element.querySelector(':scope > .tabbed__panels > .tabbed__panel.is-active') === cached,
+        await root.getElement(),
+        thirdPanelElement,
+      );
+      expect(thirdPanelReused).toBe(true);
+      expect(await connectedIndexes(root)).toEqual(['1', '2']);
+
+      await clickTab(root, 0);
+      const returned = await activePanel(root);
+      await expect(returned).toHaveText(expect.stringContaining('Limit body one.'));
+      // Returning to tab 0 re-renders its body and evicts the now least
+      // recently activated non-active body: tab 1.
+      expect(await connectedIndexes(root)).toEqual(['0', '2']);
+
+      await setLimit(1);
+      // Lowering the limit evicts immediately: only the active body survives.
+      expect(await connectedIndexes(root)).toEqual(['0']);
+      await expectOneActivePanelPerRoot();
+    } finally {
+      await setLimit(5);
+    }
+  });
 });

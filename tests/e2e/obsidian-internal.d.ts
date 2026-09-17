@@ -10,6 +10,14 @@ declare module 'obsidian' {
     plugins: {
       enabledPlugins: Set<string>;
       manifests: Record<string, PluginManifest>;
+      plugins: Record<
+        string,
+        | {
+            settings: Record<string, unknown>;
+            updateSettings(next: Record<string, unknown>): Promise<void>;
+          }
+        | undefined
+      >;
     };
   }
 }
