@@ -107,6 +107,8 @@ Reading view keeps navigation and lazy rendering but hides source-changing contr
 
 Open **Settings → Tabbed** to configure the separator, new-tab defaults, controls, notices, editing behavior, title layout, border, content padding and maximum height.
 
+**Live tab limit** sets how many rendered tab bodies each block keeps at once (default `5`). When you visit more tabs than that, the least recently used body is unloaded and renders again on your next visit. Set it to `0` to keep every visited tab, or to `1` to keep only the active tab.
+
 ## Installation
 
 [Install Tabbed from the Obsidian Community Store](https://obsidian.md/plugins?id=tabbed).

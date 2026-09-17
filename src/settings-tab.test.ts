@@ -20,6 +20,7 @@ const expectedNames: Readonly<Record<SettingKey, string>> = {
   showEditorToolbar: 'Show editor toolbar',
   tabSize: 'Tab size',
   autoSaveDelayMs: 'Autosave delay (ms)',
+  maxLiveTabBodies: 'Live tab limit',
   border: 'Border',
   borderColor: 'Border color',
   hideNativeEditButton: 'Hide native edit button',
@@ -179,6 +180,11 @@ describe('TabbedSettingsTab definitions', () => {
       type: 'number',
       min: 0,
       max: 60_000,
+    });
+    expect(definition(tab, 'maxLiveTabBodies').control).toMatchObject({
+      type: 'number',
+      min: 0,
+      max: 100,
     });
   });
 

@@ -9,6 +9,7 @@ export interface TabbedSettings {
   showEditorToolbar: boolean;
   tabSize: number;
   autoSaveDelayMs: number;
+  maxLiveTabBodies: number;
   border: 'none' | 'hover' | 'always';
   borderColor: string;
   hideNativeEditButton: boolean;
@@ -30,6 +31,7 @@ export const DEFAULT_SETTINGS: TabbedSettings = {
   showEditorToolbar: true,
   tabSize: 4,
   autoSaveDelayMs: 5000,
+  maxLiveTabBodies: 5,
   border: 'hover',
   borderColor: '#e0e0e0',
   hideNativeEditButton: true,
@@ -71,6 +73,11 @@ function isNumberInRange(minimum: number, maximum: number): (value: unknown) => 
     typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum;
 }
 
+function isIntegerInRange(minimum: number, maximum: number): (value: unknown) => value is number {
+  return (value: unknown): value is number =>
+    typeof value === 'number' && Number.isInteger(value) && value >= minimum && value <= maximum;
+}
+
 function isSingleLineString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && !/[\r\n]/.test(value);
 }
@@ -104,9 +111,34 @@ function isAction(value: unknown): value is TabbedSettings['action'] {
   return isOneOf(value, ['none', 'add', 'edit']);
 }
 
-export function normalizeSettings(value: unknown): TabbedSettings {
-  const saved = isRecord(value) ? value : {};
+type CoreSettings = Pick<
+  TabbedSettings,
+  | 'separator'
+  | 'defaultTitle'
+  | 'defaultContent'
+  | 'action'
+  | 'showSuccessNotices'
+  | 'dragAndDrop'
+  | 'doubleClickToEdit'
+  | 'showEditorToolbar'
+  | 'tabSize'
+  | 'autoSaveDelayMs'
+  | 'maxLiveTabBodies'
+>;
 
+type AppearanceSettings = Pick<
+  TabbedSettings,
+  | 'border'
+  | 'borderColor'
+  | 'hideNativeEditButton'
+  | 'titlePosition'
+  | 'titleLineMode'
+  | 'limitTitleWidth'
+  | 'contentPadding'
+  | 'contentMaxHeight'
+>;
+
+function normalizeCoreSettings(saved: Record<string, unknown>): CoreSettings {
   return {
     separator: valueOrDefault(saved, 'separator', DEFAULT_SETTINGS.separator, isSingleLineString),
     defaultTitle: valueOrDefault(saved, 'defaultTitle', DEFAULT_SETTINGS.defaultTitle, isString),
@@ -143,6 +175,17 @@ export function normalizeSettings(value: unknown): TabbedSettings {
       DEFAULT_SETTINGS.autoSaveDelayMs,
       isNumberInRange(0, 60_000),
     ),
+    maxLiveTabBodies: valueOrDefault(
+      saved,
+      'maxLiveTabBodies',
+      DEFAULT_SETTINGS.maxLiveTabBodies,
+      isIntegerInRange(0, 100),
+    ),
+  };
+}
+
+function normalizeAppearanceSettings(saved: Record<string, unknown>): AppearanceSettings {
+  return {
     border: valueOrDefault(saved, 'border', DEFAULT_SETTINGS.border, (candidate) =>
       isOneOf(candidate, ['none', 'hover', 'always']),
     ),
@@ -183,5 +226,14 @@ export function normalizeSettings(value: unknown): TabbedSettings {
       DEFAULT_SETTINGS.contentMaxHeight,
       isMaxHeight,
     ),
+  };
+}
+
+export function normalizeSettings(value: unknown): TabbedSettings {
+  const saved = isRecord(value) ? value : {};
+
+  return {
+    ...normalizeCoreSettings(saved),
+    ...normalizeAppearanceSettings(saved),
   };
 }

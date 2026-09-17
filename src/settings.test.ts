@@ -14,6 +14,7 @@ describe('normalizeSettings', () => {
       showEditorToolbar: true,
       tabSize: 4,
       autoSaveDelayMs: 5000,
+      maxLiveTabBodies: 5,
       border: 'hover',
       borderColor: '#e0e0e0',
       hideNativeEditButton: true,
@@ -38,6 +39,7 @@ describe('normalizeSettings', () => {
         showEditorToolbar: false,
         tabSize: 8,
         autoSaveDelayMs: 0,
+        maxLiveTabBodies: 0,
         border: 'always',
         borderColor: '#A1b2C3',
         hideNativeEditButton: false,
@@ -58,6 +60,7 @@ describe('normalizeSettings', () => {
       showEditorToolbar: false,
       tabSize: 8,
       autoSaveDelayMs: 0,
+      maxLiveTabBodies: 0,
       border: 'always',
       borderColor: '#A1b2C3',
       hideNativeEditButton: false,
@@ -135,6 +138,23 @@ describe('normalizeSettings', () => {
       expect(normalizeSettings({ contentMaxHeight }).contentMaxHeight).toBe(
         DEFAULT_SETTINGS.contentMaxHeight,
       );
+    },
+  );
+
+  it('loads old-format settings without the live tab limit and keeps saved fields', () => {
+    const normalized = normalizeSettings({ separator: '::', tabSize: 8, border: 'always' });
+    expect(normalized.maxLiveTabBodies).toBe(5);
+    expect(normalized).toMatchObject({ separator: '::', tabSize: 8, border: 'always' });
+  });
+
+  it.each([0, 1, 5, 100])('accepts live tab limit %s', (value) => {
+    expect(normalizeSettings({ maxLiveTabBodies: value }).maxLiveTabBodies).toBe(value);
+  });
+
+  it.each([-1, 101, 2.5, Number.NaN, Number.POSITIVE_INFINITY, '5', null])(
+    'falls back to the default live tab limit for %s',
+    (value) => {
+      expect(normalizeSettings({ maxLiveTabBodies: value }).maxLiveTabBodies).toBe(5);
     },
   );
 });

@@ -91,6 +91,11 @@ const settingDefinitions: Array<SettingDefinitionItem<SettingKey>> = [
     control: { type: 'number', key: 'autoSaveDelayMs', min: 0, max: 60_000 },
   },
   {
+    name: 'Live tab limit',
+    desc: 'Rendered tab bodies kept per block. The least recently used one is unloaded first. 0 keeps every visited tab.',
+    control: { type: 'number', key: 'maxLiveTabBodies', min: 0, max: 100 },
+  },
+  {
     name: 'Border',
     desc: 'When to show the border around a tab block.',
     control: {
