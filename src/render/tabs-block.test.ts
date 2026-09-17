@@ -1871,15 +1871,30 @@ describe('TabsBlock live body limit', () => {
     log.mockRestore();
   });
 
-  it('resets recency together with the cache on refresh', async () => {
+  it('keeps enforcing the limit after refresh rebuilds the cache', async () => {
     const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
     const { block, container } = createBlock(renderer, threeTabs, { settings: limited(2) });
     await block.activate(1);
     await block.refreshActiveBody();
     expect(panelIndexes(container)).toEqual(['1']);
     await block.activate(2);
-    // Only tab 1 and tab 2 are live; stale recency for tab 0 must not count.
     expect(panelIndexes(container)).toEqual(['1', '2']);
+    await block.activate(0);
+    expect(panelIndexes(container)).toEqual(['0', '2']);
+    block.unload();
+  });
+
+  it('releases awaiters of a pending body that never settles after eviction', async () => {
+    const renderer = vi.fn<RenderMarkdown>((...[, markdown, element]) => {
+      if (!element.matches('.tabbed__panel')) return Promise.resolve();
+      if (markdown.trim() === 'second body') return new Promise<void>(() => {});
+      return Promise.resolve();
+    });
+    const { block } = createBlock(renderer, threeTabs, { settings: limited(1) });
+    const pending = block.activate(1);
+    await block.activate(2);
+
+    await expect(pending).resolves.toBeUndefined();
     block.unload();
   });
 });
