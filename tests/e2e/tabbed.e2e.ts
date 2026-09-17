@@ -537,6 +537,13 @@ describe('Tabbed in a real Obsidian vault', () => {
       }, limit);
     };
 
+    const getLimit = async (): Promise<number> =>
+      browser.executeObsidian(({ app }) => {
+        const plugin = app.plugins.plugins['tabbed'];
+        if (plugin === undefined) throw new Error('Tabbed plugin is not loaded');
+        return plugin.settings['maxLiveTabBodies'] as number;
+      });
+
     const connectedIndexes = (root: WebdriverIO.Element): Promise<string[]> =>
       browser.execute(
         (element) =>
@@ -584,6 +591,7 @@ describe('Tabbed in a real Obsidian vault', () => {
         index,
       );
 
+    const originalLimit = await getLimit();
     try {
       await setLimit(2);
       await replaceActiveNote('Tabbed Limit E2E.md');
@@ -637,7 +645,7 @@ describe('Tabbed in a real Obsidian vault', () => {
       expect(await connectedIndexes(root)).toEqual(['0']);
       await expectOneActivePanelPerRoot();
     } finally {
-      await setLimit(5);
+      await setLimit(originalLimit);
     }
   });
 });
