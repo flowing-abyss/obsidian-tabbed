@@ -10,6 +10,7 @@ interface ColumnsTestWindow extends Window {
   __columnsErrors?: string[];
   __columnsRestoreConsole?: () => void;
   __columnsCached?: { base: HTMLElement; columns: HTMLElement };
+  __columnsReloading?: true;
 }
 
 function required<T>(value: T | undefined): T {
@@ -113,6 +114,8 @@ async function overrideViewportWidth(width: number | null, expected: number): Pr
   if (width === null) {
     await browser.sendCommand('Emulation.clearDeviceMetricsOverride', {});
   } else {
+    // Obsidian only picks the desktop/tablet layout while both the width and the height
+    // are at least 600px, so the height must stay above that for the restore direction.
     await browser.sendCommand('Emulation.setDeviceMetricsOverride', {
       width,
       height: 900,
@@ -126,32 +129,57 @@ async function overrideViewportWidth(width: number | null, expected: number): Pr
   );
 }
 
+// Toggles Obsidian's mobile emulation, which reloads the app, and waits for the new
+// page to finish booting. `body.is-phone` alone is not enough: Obsidian sets it before
+// the workspace and plugins load, and the next `openNote` drives both. A sentinel on
+// the old page tells the fresh page apart from the one that is still unloading.
+async function emulateMobile(enabled: boolean): Promise<void> {
+  await browser.executeObsidian(({ app }, next) => {
+    (window as ColumnsTestWindow).__columnsReloading = true;
+    app.emulateMobile(next);
+  }, enabled);
+  await browser.waitUntil(
+    () =>
+      browser.executeObsidian(
+        ({ app }) =>
+          (window as ColumnsTestWindow).__columnsReloading === undefined &&
+          app.workspace.layoutReady &&
+          app.plugins.enabledPlugins.has('tabbed'),
+      ),
+    {
+      timeout: 20_000,
+      timeoutMsg: `Obsidian did not reload with mobile emulation ${enabled ? 'on' : 'off'}`,
+    },
+  );
+}
+
 // Puts desktop Obsidian into its phone layout (the real Android run already is one).
 // Obsidian's emulation only chooses the phone layout while the viewport is narrower
-// than 600px, so the viewport shrinks first and emulation toggles afterwards; each
-// toggle reloads the app. Returns the undo step; callers must run it in `finally`
-// because the emulation flag persists in localStorage and would leak into later specs.
+// than 600px, so the viewport shrinks first and emulation toggles afterwards. Returns
+// the undo step; callers must run it in `finally` because the emulation flag persists
+// in localStorage and would leak into later specs. A failure while entering undoes
+// the half-applied state itself, since the caller's `finally` is not reached then.
 async function enterPhoneLayout(): Promise<() => Promise<void>> {
   if (browser.isMobile) return async () => {};
   const originalWidth = await browser.execute(() => window.innerWidth);
-  await overrideViewportWidth(590, 590);
-  await browser.executeObsidian(({ app }) => {
-    app.emulateMobile(true);
-  });
-  await browser.waitUntil(isPhoneLayout, {
-    timeout: 20_000,
-    timeoutMsg: 'Desktop Obsidian did not switch to the emulated phone layout',
-  });
-  return async () => {
-    await browser.executeObsidian(({ app }) => {
-      app.emulateMobile(false);
-    });
-    await browser.waitUntil(async () => !(await isPhoneLayout()), {
-      timeout: 20_000,
-      timeoutMsg: 'Desktop Obsidian did not leave the emulated phone layout',
-    });
+  // Safe from any half-entered state: switching emulation off only deletes the flag
+  // and reloads, and clearing the viewport override is idempotent.
+  const undo = async (): Promise<void> => {
+    await emulateMobile(false);
+    expect(await isPhoneLayout()).toBe(false);
     await overrideViewportWidth(null, originalWidth);
   };
+  try {
+    await overrideViewportWidth(590, 590);
+    await emulateMobile(true);
+    await browser.waitUntil(isPhoneLayout, {
+      timeoutMsg: 'Desktop Obsidian did not switch to the emulated phone layout',
+    });
+  } catch (error) {
+    await undo();
+    throw error;
+  }
+  return undo;
 }
 
 interface PhoneEmbedGeometry {

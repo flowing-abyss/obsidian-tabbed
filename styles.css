@@ -125,7 +125,8 @@
    embed by the note margins and shifts it left. That only suits a Base sitting
    directly in the note; inside a tab panel or a column it overlaps the neighbour
    column and adds phantom horizontal scroll, so both containers cancel it the way
-   Obsidian does for `.callout-content`. */
+   Obsidian does for `.callout-content`. Only the placement is reverted: the phone
+   border and corner chrome of the embed stays as it is, matching callouts. */
 .tabbed > [class~='tabbed__panel'],
 .tabbed > [class~='tabbed__panels'] > [class~='tabbed__panel'] {
   --bases-embed-width: 100%;
