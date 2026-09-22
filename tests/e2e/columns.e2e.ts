@@ -102,6 +102,123 @@ async function waitStack(root: WebdriverIO.Element, stacked: boolean): Promise<v
   await browser.waitUntil(async () => (await layout(root)).stacked === stacked);
 }
 
+async function isPhoneLayout(): Promise<boolean> {
+  return browser.execute(() => document.body.classList.contains('is-phone'));
+}
+
+// Electron's chromedriver rejects the WebDriver window-rect commands, so the viewport
+// is narrowed with a DevTools device-metrics override instead (the same mechanism as
+// wdio-obsidian-service's `mobileEmulation` recipe), which leaves the OS window alone.
+async function overrideViewportWidth(width: number | null, expected: number): Promise<void> {
+  if (width === null) {
+    await browser.sendCommand('Emulation.clearDeviceMetricsOverride', {});
+  } else {
+    await browser.sendCommand('Emulation.setDeviceMetricsOverride', {
+      width,
+      height: 900,
+      deviceScaleFactor: 0,
+      mobile: false,
+    });
+  }
+  await browser.waitUntil(
+    async () => Math.abs((await browser.execute(() => window.innerWidth)) - expected) < 2,
+    { timeoutMsg: `Obsidian viewport did not become ${expected}px wide` },
+  );
+}
+
+// Puts desktop Obsidian into its phone layout (the real Android run already is one).
+// Obsidian's emulation only chooses the phone layout while the viewport is narrower
+// than 600px, so the viewport shrinks first and emulation toggles afterwards; each
+// toggle reloads the app. Returns the undo step; callers must run it in `finally`
+// because the emulation flag persists in localStorage and would leak into later specs.
+async function enterPhoneLayout(): Promise<() => Promise<void>> {
+  if (browser.isMobile) return async () => {};
+  const originalWidth = await browser.execute(() => window.innerWidth);
+  await overrideViewportWidth(590, 590);
+  await browser.executeObsidian(({ app }) => {
+    app.emulateMobile(true);
+  });
+  await browser.waitUntil(isPhoneLayout, {
+    timeout: 20_000,
+    timeoutMsg: 'Desktop Obsidian did not switch to the emulated phone layout',
+  });
+  return async () => {
+    await browser.executeObsidian(({ app }) => {
+      app.emulateMobile(false);
+    });
+    await browser.waitUntil(async () => !(await isPhoneLayout()), {
+      timeout: 20_000,
+      timeoutMsg: 'Desktop Obsidian did not leave the emulated phone layout',
+    });
+    await overrideViewportWidth(null, originalWidth);
+  };
+}
+
+interface PhoneEmbedGeometry {
+  kind: 'note' | 'panel' | 'column';
+  transform: string;
+  // Positive when the embed sticks out past its container's edge.
+  overflowLeft: number;
+  overflowRight: number;
+}
+
+async function phoneBaseGeometry() {
+  return browser.execute((previewSelector) => {
+    const view = document.querySelector<HTMLElement>(previewSelector);
+    if (view === null) throw new Error('Missing active preview');
+    const sizer = view.querySelector<HTMLElement>('.markdown-preview-sizer') ?? view;
+    const edges = (element: Element) => {
+      const box = element.getBoundingClientRect();
+      return { left: box.left, right: box.right };
+    };
+    const embeds: PhoneEmbedGeometry[] = Array.from(
+      view.querySelectorAll<HTMLElement>('.bases-embed'),
+    ).map((embed) => {
+      const column = embed.closest<HTMLElement>('.tabbed-columns__column');
+      const panel = embed.closest<HTMLElement>('.tabbed__panel');
+      const container = column ?? panel ?? sizer;
+      const box = edges(container);
+      if (column === null && panel !== null) {
+        const style = getComputedStyle(panel);
+        box.left += Number.parseFloat(style.paddingLeft);
+        box.right -= Number.parseFloat(style.paddingRight);
+      }
+      const own = edges(embed);
+      let kind: PhoneEmbedGeometry['kind'] = 'note';
+      if (column !== null) kind = 'column';
+      else if (panel !== null) kind = 'panel';
+      return {
+        kind,
+        transform: getComputedStyle(embed).transform,
+        overflowLeft: box.left - own.left,
+        overflowRight: own.right - box.right,
+      };
+    });
+    const panel = view.querySelector<HTMLElement>('.tabbed__panel.is-active');
+    const root = view.querySelector<HTMLElement>('.tabbed-columns');
+    const columns = Array.from(
+      root?.querySelectorAll<HTMLElement>(
+        ':scope > .tabbed-columns__grid > .tabbed-columns__column',
+      ) ?? [],
+    );
+    if (panel === null || root === null || columns.length === 0) {
+      throw new Error('Missing phone fixture tab panel or columns');
+    }
+    const columnsExtent =
+      Math.max(...columns.map((column) => column.getBoundingClientRect().right)) -
+      root.getBoundingClientRect().left +
+      root.scrollLeft;
+    return {
+      phone: document.body.classList.contains('is-phone'),
+      embeds,
+      panelOverflow: panel.scrollWidth - panel.clientWidth,
+      // The two 18rem columns intentionally overflow a phone-width root; anything past
+      // the last column's edge means an embed is sticking out of its column.
+      rootOverflowPastColumns: root.scrollWidth - columnsExtent,
+    };
+  }, preview);
+}
+
 describe('Columns in real Obsidian Reading view', () => {
   afterEach(async () => {
     try {
@@ -375,6 +492,55 @@ describe('Columns in real Obsidian Reading view', () => {
         expect(sample).toMatchObject({ active: true, stacked });
         expect(sample.width).toBeGreaterThan(0);
       }
+    }
+  });
+
+  it('keeps phone-layout Bases inside their columns and tab panel instead of full-bleed', async () => {
+    // Obsidian's phone stylesheet widens Reading-view Base embeds past the note margins
+    // and shifts them left. Inside our containers that made column Bases overlap the
+    // neighbour column and gave tab panels phantom horizontal scroll.
+    const leavePhoneLayout = await enterPhoneLayout();
+    try {
+      if (browser.isMobile && !(await isPhoneLayout())) return; // tablet: no full-bleed rule
+      await openNote('Columns Phone E2E.md');
+      await browser.waitUntil(async () => (await browser.$$(roots).length) === 1);
+      // Bases virtualises rows until a table scrolls into view; the embed box is what
+      // Obsidian widens and shifts, so a loaded header is enough to measure.
+      await browser.waitUntil(async () => {
+        const loaded = await browser.execute(
+          (selector) =>
+            Array.from(document.querySelectorAll<HTMLElement>(`${selector} .bases-embed`)).map(
+              (embed) => embed.classList.contains('is-loaded'),
+            ),
+          preview,
+        );
+        return loaded.length === 4 && loaded.every(Boolean);
+      });
+      const geometry = await phoneBaseGeometry();
+      expect(geometry.phone).toBe(true);
+      const kinds = { column: 0, note: 0, panel: 0 };
+      for (const embed of geometry.embeds) kinds[embed.kind] += 1;
+      expect(kinds).toEqual({ column: 2, note: 1, panel: 1 });
+      for (const embed of geometry.embeds) {
+        if (embed.kind === 'note') {
+          // Obsidian's own full-bleed layout for a Base directly in the note stays intact.
+          expect(embed.transform).not.toBe('none');
+          expect(embed.overflowLeft).toBeGreaterThan(1);
+          continue;
+        }
+        expect(embed.transform).toBe('none');
+        expect(Math.abs(embed.overflowLeft)).toBeLessThan(1);
+        expect(Math.abs(embed.overflowRight)).toBeLessThan(1);
+      }
+      expect(geometry.panelOverflow).toBe(0);
+      expect(geometry.rootOverflowPastColumns).toBeLessThan(1);
+      // Leaving the phone layout reloads the app and wipes the console capture that
+      // `afterEach` reads, so check it here while it still holds this test's errors.
+      expect(
+        await browser.execute(() => (window as ColumnsTestWindow).__columnsErrors ?? []),
+      ).toEqual([]);
+    } finally {
+      await leavePhoneLayout();
     }
   });
 

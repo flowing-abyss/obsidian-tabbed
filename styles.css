@@ -121,8 +121,16 @@
   max-height: var(--tabbed-content-max-height);
 }
 
+/* On phones Obsidian makes every Reading-view Base embed full-bleed: it widens the
+   embed by the note margins and shifts it left. That only suits a Base sitting
+   directly in the note; inside a tab panel or a column it overlaps the neighbour
+   column and adds phantom horizontal scroll, so both containers cancel it the way
+   Obsidian does for `.callout-content`. */
 .tabbed > [class~='tabbed__panel'],
 .tabbed > [class~='tabbed__panels'] > [class~='tabbed__panel'] {
+  --bases-embed-width: 100%;
+  --bases-embed-transform: none;
+
   min-width: 0;
   max-height: var(--tabbed-content-max-height);
   padding: var(--tabbed-content-padding);
@@ -208,6 +216,8 @@
 
 .tabbed-columns {
   --tabbed-column-min-width: 18rem;
+  --bases-embed-width: 100%;
+  --bases-embed-transform: none;
 
   min-width: 0;
   overflow-x: auto;

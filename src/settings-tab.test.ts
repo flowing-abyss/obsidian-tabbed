@@ -443,6 +443,30 @@ describe('styles', () => {
     ).toBe(false);
   });
 
+  it('cancels the phone full-bleed Base embed layout inside columns and tab panels', async () => {
+    // On phones Obsidian widens every Reading-view Base embed by the note margins and
+    // shifts it left (`--bases-embed-width` / `--bases-embed-transform`), which is only
+    // right for a Base sitting directly in the note. Inside a column or a tab panel it
+    // overlaps the neighbour column and adds phantom horizontal scroll, so the plugin
+    // resets both variables there — exactly like Obsidian does for `.callout-content`.
+    const rules = styleRules(await readStyles());
+    const columns = createDiv({ cls: 'tabbed-columns' });
+    const { root, panel } = layout('top', 'one');
+    const nestedPanel = root
+      .createDiv({ cls: 'tabbed__panels' })
+      .createDiv({ cls: 'tabbed__panel is-active' });
+    const unrelated = createDiv({ cls: 'markdown-preview-sizer' });
+
+    for (const container of [columns, panel, nestedPanel]) {
+      expect(declaration(rules, container, '--bases-embed-width')).toBe('100%');
+      expect(declaration(rules, container, '--bases-embed-transform')).toBe('none');
+    }
+    for (const outside of [root, unrelated]) {
+      expect(declaration(rules, outside, '--bases-embed-width')).toBe('');
+      expect(declaration(rules, outside, '--bases-embed-transform')).toBe('');
+    }
+  });
+
   it('keeps all plugin chrome scoped and theme-controlled', async () => {
     const styles = await readStyles();
     const selectorList = selectors(styleRules(styles));
