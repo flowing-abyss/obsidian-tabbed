@@ -122,12 +122,20 @@ function checkVersionsConsistency(manifest) {
 }
 
 function checkMainJs(manifest) {
-  if (!existsSync('main.js')) {
-    errors.push('main.js is missing — run `pnpm run build` first.');
-    return;
+  // One read serves every check below, so the file cannot change between an
+  // existence/size probe and the read that follows it.
+  let mainJs;
+  try {
+    mainJs = readFileSync('main.js');
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      errors.push('main.js is missing — run `pnpm run build` first.');
+      return;
+    }
+    throw error;
   }
 
-  const bytes = statSync('main.js').size;
+  const bytes = mainJs.length;
   if (bytes === 0) {
     errors.push('main.js is empty.');
     return;
@@ -139,7 +147,7 @@ function checkMainJs(manifest) {
   }
 
   if (manifest?.isDesktopOnly === false) {
-    checkNoDesktopOnlyRequires(readFileSync('main.js', 'utf8'));
+    checkNoDesktopOnlyRequires(mainJs.toString('utf8'));
   }
 }
 
