@@ -67,6 +67,12 @@ jobs:
           sleep 1
           herbstluftwm &
           sleep 1
+          # Two Obsidian windows run at once (WDIO_MAX_INSTANCES). herbstluftwm's default
+          # vertical layout splits the screen between them, so every window is resized
+          # whenever another one opens or closes, mid-test. "max" gives each window the
+          # whole screen instead, keeping geometry stable for the whole run.
+          herbstclient set default_frame_layout max
+          herbstclient set_layout max
 
       - name: Run e2e tests
         run: pnpm run test:e2e
