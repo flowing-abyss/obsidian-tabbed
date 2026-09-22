@@ -388,11 +388,15 @@ describe('Tabbed in a real Obsidian vault', () => {
       }, mode);
       await browser.waitUntil(async () => (await visibleElements('.tabbed')).length > 0);
       const outer = await rootAt(0);
-      const initialScrollHeight = await browser.execute(
+      // Scroll overflow (not the raw scroll height) is what a leaked hidden panel would
+      // change. The raw height also tracks the view height, which moves whenever the
+      // tiling window manager on the Linux CI runner re-tiles Obsidian windows mid-test.
+      const initialOverflow = await browser.execute(
         (element) => {
           element.setCssProps({ '--tabbed-content-max-height': '420px' });
           element.scrollIntoView({ block: 'start' });
-          return element.closest('.markdown-preview-view, .cm-scroller')?.scrollHeight;
+          const scroller = element.closest('.markdown-preview-view, .cm-scroller');
+          return scroller === null ? null : scroller.scrollHeight - scroller.clientHeight;
         },
         await outer.getElement(),
       );
@@ -400,7 +404,7 @@ describe('Tabbed in a real Obsidian vault', () => {
       const base = (await activePanel(outer)).$('.bases-embed');
       await expect(base).toHaveText(expect.stringContaining('Item 01'));
       const evidence = await browser.execute(
-        async (element) => {
+        async (element, expectedOverflow) => {
           const tabs = element.querySelectorAll<HTMLElement>(
             ':scope > .tabbed__list > .tabbed__tab',
           );
@@ -425,18 +429,31 @@ describe('Tabbed in a real Obsidian vault', () => {
           }
           element.setCssProps({ '--tabbed-content-max-height': 'none' });
           tabs[0]?.click();
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
-          const finalScrollHeight = element.closest(
-            '.markdown-preview-view, .cm-scroller',
-          )?.scrollHeight;
-          return { hiddenHeight, frames, finalScrollHeight };
+          // Give the Base virtualizer up to two seconds to settle on a slow CI runner
+          // instead of a fixed pause; stop as soon as the overflow is back to baseline.
+          const settleOverflow = async (): Promise<number | null> => {
+            const scroller = element.closest('.markdown-preview-view, .cm-scroller');
+            const deadline = performance.now() + 2000;
+            let overflow: number | null = null;
+            do {
+              await new Promise<void>((resolve) => {
+                window.requestAnimationFrame(() => {
+                  resolve();
+                });
+              });
+              overflow = scroller === null ? null : scroller.scrollHeight - scroller.clientHeight;
+            } while (overflow !== expectedOverflow && performance.now() < deadline);
+            return overflow;
+          };
+          return { hiddenHeight, frames, finalOverflow: await settleOverflow() };
         },
         await outer.getElement(),
+        initialOverflow,
       );
       expect(evidence.frames).toEqual([true, true, true]);
       expect(evidence.hiddenHeight).toBe(420);
-      expect(initialScrollHeight).toBeGreaterThan(0);
-      expect(evidence.finalScrollHeight).toBe(initialScrollHeight);
+      expect(initialOverflow).not.toBeNull();
+      expect(evidence.finalOverflow).toBe(initialOverflow);
     });
   }
 
