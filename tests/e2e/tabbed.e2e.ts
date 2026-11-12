@@ -665,4 +665,61 @@ describe('Tabbed in a real Obsidian vault', () => {
       await setLimit(originalLimit);
     }
   });
+
+  it('leaves the hidden editor copy of a Reading view note unrendered until it is shown', async () => {
+    const setWaitUntilShown = async (value: boolean): Promise<void> => {
+      await browser.executeObsidian(async ({ app }, enabled) => {
+        const plugin = app.plugins.plugins['tabbed'];
+        if (plugin === undefined) throw new Error('Tabbed plugin is not loaded');
+        await plugin.updateSettings({ ...plugin.settings, waitUntilShown: enabled });
+      }, value);
+    };
+
+    // Panels and active-panel text of the top-level block in each half of the note view.
+    const copies = (): Promise<Record<'editor' | 'reading', { panels: number; text: string }>> =>
+      browser.executeObsidian(({ app, obsidian }) => {
+        const view = app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+        if (view === null) throw new Error('Expected an active Markdown view');
+        const describe = (scope: string) => {
+          const root = Array.from(
+            view.containerEl.querySelectorAll<HTMLElement>(`${scope} .tabbed`),
+          ).find((candidate) => candidate.parentElement?.closest('.tabbed') === null);
+          if (root === undefined) return { panels: -1, text: '' };
+          const own = Array.from(
+            root.querySelectorAll<HTMLElement>(':scope > .tabbed__panels > .tabbed__panel'),
+          );
+          const active = own.find((panel) => panel.classList.contains('is-active'));
+          return { panels: own.length, text: active?.textContent.trim() ?? '' };
+        };
+        return {
+          editor: describe('.markdown-source-view'),
+          reading: describe('.markdown-preview-view'),
+        };
+      });
+
+    try {
+      await setWaitUntilShown(true);
+      // Switch the leaf to Reading view first, so the next note loads its editor copy hidden.
+      await browser.executeObsidianCommand('markdown:toggle-preview');
+      await replaceActiveNote('Tabbed Limit E2E.md');
+      await browser.waitUntil(async () => (await copies()).reading.text === 'Limit body one.');
+      // Give the hidden copy several frames in which it could have rendered.
+      await browser.execute(async () => {
+        for (let frame = 0; frame < 5; frame += 1) {
+          await new Promise<void>((resolve) => {
+            window.requestAnimationFrame(() => {
+              resolve();
+            });
+          });
+        }
+      });
+      expect(await copies()).toMatchObject({ editor: { panels: 0 }, reading: { panels: 1 } });
+
+      await browser.executeObsidianCommand('markdown:toggle-preview');
+      await browser.waitUntil(async () => (await copies()).editor.text === 'Limit body one.');
+      expect((await copies()).editor.panels).toBe(1);
+    } finally {
+      await setWaitUntilShown(false);
+    }
+  });
 });
