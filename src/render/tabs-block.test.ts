@@ -12,6 +12,7 @@ import type { ParsedTabsDocument } from '../tabs/tab-model.js';
 import { parseTabsSource } from '../tabs/tab-parser.js';
 import { ColumnsBlock } from './columns-block.js';
 import type { RenderMarkdown } from './markdown-renderer.js';
+import type { ShowWatcher } from './show-watcher.js';
 import { TabsBlock, type TabsBlockHost } from './tabs-block.js';
 
 const twoTabs = ['tab: First', 'first body', 'tab: Second', 'second body'].join('\n');
@@ -87,6 +88,14 @@ function host() {
   } satisfies TabsBlockHost;
 }
 
+function blockContainer(container: HTMLElement | undefined, attach = true): HTMLElement {
+  const element = container ?? createDiv();
+  if (!element.isConnected && attach) {
+    document.body.append(element);
+  }
+  return element;
+}
+
 function createBlock(
   renderer: RenderMarkdown,
   source = twoTabs,
@@ -97,7 +106,9 @@ function createBlock(
     memory?: SelectionMemory;
     settings?: TabbedSettings;
     parser?: (source: string, settings: TabbedSettings) => ParsedTabsDocument;
+    showWatcher?: ShowWatcher;
     load?: boolean;
+    attach?: boolean;
   } = {},
 ): {
   block: TabsBlock;
@@ -106,10 +117,7 @@ function createBlock(
   blockHost: ReturnType<typeof host>;
 } {
   const app = options.app ?? App.createConfigured__().asOriginalType__();
-  const container = options.container ?? createDiv();
-  if (!container.isConnected) {
-    document.body.append(container);
-  }
+  const container = blockContainer(options.container, options.attach);
   const blockHost = host();
   const block = new TabsBlock(
     app,
@@ -121,6 +129,7 @@ function createBlock(
     blockHost,
     renderer,
     options.parser,
+    options.showWatcher,
   );
   if (options.load !== false) {
     block.load();
@@ -200,6 +209,12 @@ function deferred(): {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+function bodyRenders(renderer: ReturnType<typeof vi.fn<RenderMarkdown>>): string[] {
+  return renderer.mock.calls
+    .filter(([, , element]) => element.matches('.tabbed__panel'))
+    .map(([, markdown]) => markdown.trim());
 }
 
 async function settle(): Promise<void> {
@@ -1637,10 +1652,6 @@ describe('TabsBlock live body limit', () => {
     ...DEFAULT_SETTINGS,
     maxLiveTabBodies,
   });
-  const bodyRenders = (renderer: ReturnType<typeof vi.fn<RenderMarkdown>>): string[] =>
-    renderer.mock.calls
-      .filter(([, , element]) => element.matches('.tabbed__panel'))
-      .map(([, markdown]) => markdown.trim());
   const panelIndexes = (container: HTMLElement): string[] =>
     Array.from(container.querySelectorAll<HTMLElement>('.tabbed__panel')).map(
       (panel) => panel.dataset['tabIndex'] ?? '',
@@ -1997,5 +2008,271 @@ describe('TabsBlock live body limit', () => {
 
     await expect(pending).resolves.toBeUndefined();
     block.unload();
+  });
+});
+
+describe('TabsBlock wait until shown', () => {
+  const waiting: TabbedSettings = { ...DEFAULT_SETTINGS, waitUntilShown: true };
+
+  const fakeWatcher = (initiallyShown = false, cancelRemoves = true) => {
+    let visible = initiallyShown;
+    const pending: Array<() => void> = [];
+    const cancel = vi.fn();
+    const whenShown = vi.fn<ShowWatcher['whenShown']>((...[, callback]) => {
+      pending.push(callback);
+      return () => {
+        cancel();
+        if (cancelRemoves) pending.splice(pending.indexOf(callback), 1);
+      };
+    });
+    const watcher: ShowWatcher = {
+      isHiddenEditorCopy: (element) => element.isConnected && !visible,
+      whenShown,
+    };
+    return {
+      watcher,
+      whenShown,
+      cancel,
+      show: () => {
+        visible = true;
+        for (const callback of pending.splice(0)) callback();
+      },
+      hide: () => {
+        visible = false;
+      },
+    };
+  };
+
+  it('renders a hidden block at once while the setting is off', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher, whenShown } = fakeWatcher();
+    const { block } = createBlock(renderer, twoTabs, { showWatcher: watcher });
+    await settle();
+
+    expect(bodyRenders(renderer)).toStrictEqual(['first body']);
+    expect(whenShown).not.toHaveBeenCalled();
+    block.unload();
+  });
+
+  it('decides once Obsidian attaches a block that loads detached', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher, whenShown, show } = fakeWatcher();
+    const { block, container } = createBlock(renderer, twoTabs, {
+      attach: false,
+      settings: waiting,
+      showWatcher: watcher,
+    });
+    document.body.append(container);
+    await settle();
+
+    expect(whenShown).toHaveBeenCalledOnce();
+    expect(bodyRenders(renderer)).toStrictEqual([]);
+
+    show();
+    await settle();
+
+    expect(bodyRenders(renderer)).toStrictEqual(['first body']);
+    block.unload();
+  });
+
+  it('renders a block that stays detached after the first check', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher, whenShown } = fakeWatcher();
+    const { block } = createBlock(renderer, twoTabs, {
+      attach: false,
+      settings: waiting,
+      showWatcher: watcher,
+    });
+    expect(bodyRenders(renderer)).toStrictEqual([]);
+    await settle();
+
+    expect(bodyRenders(renderer)).toStrictEqual(['first body']);
+    expect(whenShown).not.toHaveBeenCalled();
+    block.unload();
+  });
+
+  it('does not activate a block unloaded before the attachment check', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher } = fakeWatcher(true);
+    const { block } = createBlock(renderer, twoTabs, {
+      attach: false,
+      settings: waiting,
+      showWatcher: watcher,
+    });
+    block.unload();
+    await settle();
+
+    expect(bodyRenders(renderer)).toStrictEqual([]);
+  });
+
+  it('renders a block that loads shown without waiting', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher, whenShown } = fakeWatcher(true);
+    const { block } = createBlock(renderer, twoTabs, { settings: waiting, showWatcher: watcher });
+    await settle();
+    await block.activate(1);
+
+    expect(bodyRenders(renderer)).toStrictEqual(['first body', 'second body']);
+    expect(whenShown).not.toHaveBeenCalled();
+    block.unload();
+  });
+
+  it('keeps titles but renders no body until a hidden block is shown', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher, whenShown, show } = fakeWatcher();
+    const { block, container } = createBlock(renderer, twoTabs, {
+      settings: waiting,
+      showWatcher: watcher,
+    });
+    await settle();
+
+    expect(bodyRenders(renderer)).toStrictEqual([]);
+    expect(container.querySelectorAll('.tabbed__panel')).toHaveLength(0);
+    expect(container.querySelectorAll('.tabbed__tab')).toHaveLength(2);
+    const first = required(container.querySelector('.tabbed__tab'), 'Expected the first tab');
+    expect(first.getAttribute('aria-selected')).toBe('true');
+    expect(first.hasAttribute('aria-controls')).toBe(false);
+    expect(whenShown).toHaveBeenCalledOnce();
+
+    show();
+    await settle();
+
+    expect(bodyRenders(renderer)).toStrictEqual(['first body']);
+    const panel = required(container.querySelector('.tabbed__panel'), 'Expected a panel');
+    expect(panel.classList.contains('is-active')).toBe(true);
+    expect(first.getAttribute('aria-controls')).toBe(panel.id);
+    block.unload();
+  });
+
+  it('keeps one wait across repeated hidden activations and renders the last one', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher, whenShown, show } = fakeWatcher();
+    const { block } = createBlock(renderer, threeTabs, { settings: waiting, showWatcher: watcher });
+    await settle();
+    await block.activate(2);
+    await block.refreshActiveBody();
+
+    expect(whenShown).toHaveBeenCalledOnce();
+    expect(bodyRenders(renderer)).toStrictEqual([]);
+
+    show();
+    await settle();
+
+    expect(bodyRenders(renderer)).toStrictEqual(['third body']);
+    expect(block.selectedIndex).toBe(2);
+    block.unload();
+  });
+
+  it('renders the tab another copy remembered while this one waited', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const memory = new SelectionMemory(256);
+    const { watcher, show } = fakeWatcher();
+    const { block } = createBlock(renderer, threeTabs, {
+      context: sectionContext({ text: threeTabs, lineStart: 3, lineEnd: 10 }),
+      memory,
+      settings: waiting,
+      showWatcher: watcher,
+    });
+    await settle();
+    memory.set('Note.md:3', 1);
+
+    show();
+    await settle();
+
+    expect(block.selectedIndex).toBe(1);
+    expect(bodyRenders(renderer)).toStrictEqual(['second body']);
+    block.unload();
+  });
+
+  it('switches to an already rendered body while hidden and waits for a new one', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher, whenShown, show, hide } = fakeWatcher(true);
+    const { block, container } = createBlock(renderer, threeTabs, {
+      settings: waiting,
+      showWatcher: watcher,
+    });
+    await settle();
+    await block.activate(1);
+    hide();
+
+    await block.activate(0);
+    expect(whenShown).not.toHaveBeenCalled();
+    const firstPanel = required(
+      container.querySelector('.tabbed__panel[data-tab-index="0"]'),
+      'Expected the first panel',
+    );
+    expect(firstPanel.classList.contains('is-active')).toBe(true);
+
+    await block.activate(2);
+    expect(whenShown).toHaveBeenCalledOnce();
+    expect(bodyRenders(renderer)).toStrictEqual(['first body', 'second body']);
+
+    show();
+    await settle();
+
+    expect(bodyRenders(renderer)).toStrictEqual(['first body', 'second body', 'third body']);
+    block.unload();
+  });
+
+  it('renders at once when the setting is turned off while waiting', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher, cancel } = fakeWatcher();
+    const { block } = createBlock(renderer, twoTabs, { settings: waiting, showWatcher: watcher });
+    await settle();
+
+    await block.applySettings({ ...waiting, waitUntilShown: false });
+    await settle();
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(bodyRenders(renderer)).toStrictEqual(['first body']);
+    block.unload();
+  });
+
+  it('renders at once when syntax settings change and the setting is turned off', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher, cancel } = fakeWatcher();
+    const { block } = createBlock(renderer, twoTabs, { settings: waiting, showWatcher: watcher });
+    await settle();
+
+    await block.applySettings({ ...DEFAULT_SETTINGS, titlePosition: 'left' });
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(bodyRenders(renderer)).toStrictEqual(['first body']);
+    block.unload();
+  });
+
+  it('keeps waiting when other settings change', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher, whenShown, cancel, show } = fakeWatcher();
+    const { block } = createBlock(renderer, twoTabs, { settings: waiting, showWatcher: watcher });
+    await settle();
+
+    await block.applySettings({ ...waiting, border: 'always' });
+    await block.applySettings({ ...waiting, titlePosition: 'left' });
+
+    expect(cancel).not.toHaveBeenCalled();
+    expect(whenShown).toHaveBeenCalledOnce();
+    expect(bodyRenders(renderer)).toStrictEqual([]);
+
+    show();
+    await settle();
+
+    expect(bodyRenders(renderer)).toStrictEqual(['first body']);
+    block.unload();
+  });
+
+  it('stops waiting on unload and ignores a late show', async () => {
+    const renderer = vi.fn<RenderMarkdown>().mockResolvedValue(undefined);
+    const { watcher, cancel, show } = fakeWatcher(false, false);
+    const { block } = createBlock(renderer, twoTabs, { settings: waiting, showWatcher: watcher });
+    await settle();
+
+    block.unload();
+    expect(cancel).toHaveBeenCalledOnce();
+
+    show();
+    await settle();
+
+    expect(bodyRenders(renderer)).toStrictEqual([]);
   });
 });

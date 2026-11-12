@@ -17,6 +17,7 @@ import { literalTabsDocument, parseTabsSource } from '../tabs/tab-parser.js';
 import { findOwningMarkdownView } from './find-owning-view.js';
 import { renderMarkdown, type RenderMarkdown } from './markdown-renderer.js';
 import { RenderScope } from './render-scope.js';
+import { layoutShowWatcher, type ShowWatcher } from './show-watcher.js';
 import { TabBody } from './tab-body.js';
 
 export interface TabsBlockHost {
@@ -64,6 +65,7 @@ export class TabsBlock extends MarkdownRenderChild {
   private readonly context: MarkdownPostProcessorContext;
   private readonly renderer: RenderMarkdown;
   private readonly parser: (source: string, settings: TabbedSettings) => ParsedTabsDocument;
+  private readonly showWatcher: ShowWatcher;
   private readonly rootEl: HTMLElement;
   private readonly listEl: HTMLElement;
   private readonly panelsEl: HTMLElement;
@@ -90,6 +92,8 @@ export class TabsBlock extends MarkdownRenderChild {
   private mutationInteractions: Component | null = null;
   private locatorGeneration = 0;
   private parserFailed = false;
+  private cancelShowWait: (() => void) | null = null;
+  private attachChecked = false;
 
   constructor(
     ...[
@@ -102,6 +106,7 @@ export class TabsBlock extends MarkdownRenderChild {
       host,
       renderer = renderMarkdown,
       parser = parseTabsSource,
+      showWatcher = layoutShowWatcher,
     ]: [
       App,
       HTMLElement,
@@ -112,6 +117,7 @@ export class TabsBlock extends MarkdownRenderChild {
       TabsBlockHost,
       RenderMarkdown?,
       ((source: string, settings: TabbedSettings) => ParsedTabsDocument)?,
+      ShowWatcher?,
     ]
   ) {
     super(containerEl);
@@ -121,6 +127,7 @@ export class TabsBlock extends MarkdownRenderChild {
     this.sourcePath = context.sourcePath;
     this.renderer = renderer;
     this.parser = parser;
+    this.showWatcher = showWatcher;
     this.selectionMemory = selectionMemory;
     this.host = host;
     this.settings = { ...settings };
@@ -190,6 +197,7 @@ export class TabsBlock extends MarkdownRenderChild {
 
   override onunload(): void {
     this.isLive = false;
+    this.stopWaitingUntilShown();
     this.locatorGeneration += 1;
     this.locatorValue = null;
     this.clearBodies();
@@ -207,6 +215,7 @@ export class TabsBlock extends MarkdownRenderChild {
     const selected = this.clampIndex(index);
     this.selection = selected;
     this.rememberSelection();
+    if (this.deferUntilShown(selected)) return;
     const entry = this.prepareBody(selected);
     if (entry === null) {
       this.updateTabState(null);
@@ -240,10 +249,12 @@ export class TabsBlock extends MarkdownRenderChild {
     const syntaxChanged = this.syntaxSettingsChanged(settings);
     this.settings = { ...settings };
     this.updateHostMarker();
+    const resumeHidden = !settings.waitUntilShown && this.stopWaitingUntilShown();
 
     if (!syntaxChanged) {
       this.applyShell();
       this.enforceBodyLimit();
+      if (resumeHidden) this.startActivation(this.selection);
       return;
     }
 
@@ -756,5 +767,41 @@ export class TabsBlock extends MarkdownRenderChild {
     this.activate(index).catch((error: unknown) => {
       logError('Could not activate tab', this.errorContext(index, error));
     });
+  }
+
+  // The hidden editor copy of a note in Reading view would render Bases, embeds and queries
+  // nobody sees. Bodies already rendered stay switchable.
+  private deferUntilShown(index: number): boolean {
+    if (!this.settings.waitUntilShown || this.bodyCache.has(index)) {
+      return false;
+    }
+    if (!this.attachChecked && !this.rootEl.isConnected) {
+      // Obsidian attaches a freshly loaded block right after loading it; decide in its place.
+      this.attachChecked = true;
+      queueMicrotask(() => {
+        if (this.isLive) this.startActivation(this.selection);
+      });
+      return true;
+    }
+    if (!this.showWatcher.isHiddenEditorCopy(this.rootEl)) {
+      return false;
+    }
+    this.updateTabState(null);
+    this.cancelShowWait ??= this.showWatcher.whenShown(this.rootEl, () => {
+      this.cancelShowWait = null;
+      if (!this.isLive) return;
+      // The visible copy may have changed the remembered tab while this one waited.
+      this.restoreSelection();
+      this.startActivation(this.selection);
+    });
+    return true;
+  }
+
+  private stopWaitingUntilShown(): boolean {
+    const cancel = this.cancelShowWait;
+    if (cancel === null) return false;
+    this.cancelShowWait = null;
+    cancel();
+    return true;
   }
 }

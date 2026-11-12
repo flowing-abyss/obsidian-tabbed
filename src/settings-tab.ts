@@ -96,6 +96,11 @@ const settingDefinitions: Array<SettingDefinitionItem<SettingKey>> = [
     control: { type: 'number', key: 'maxLiveTabBodies', min: 0, max: 100 },
   },
   {
+    name: 'Wait until shown',
+    desc: 'In a note open in Reading view, leave the tabs of its hidden editor unrendered until you switch to editing.',
+    control: { type: 'toggle', key: 'waitUntilShown' },
+  },
+  {
     name: 'Border',
     desc: 'When to show the border around a tab block.',
     control: {
