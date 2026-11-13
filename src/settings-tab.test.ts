@@ -21,7 +21,6 @@ const expectedNames: Readonly<Record<SettingKey, string>> = {
   tabSize: 'Tab size',
   autoSaveDelayMs: 'Autosave delay (ms)',
   maxLiveTabBodies: 'Live tab limit',
-  waitUntilShown: 'Wait until shown',
   border: 'Border',
   borderColor: 'Border color',
   hideNativeEditButton: 'Hide native edit button',

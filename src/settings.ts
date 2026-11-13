@@ -10,7 +10,6 @@ export interface TabbedSettings {
   tabSize: number;
   autoSaveDelayMs: number;
   maxLiveTabBodies: number;
-  waitUntilShown: boolean;
   border: 'none' | 'hover' | 'always';
   borderColor: string;
   hideNativeEditButton: boolean;
@@ -33,7 +32,6 @@ export const DEFAULT_SETTINGS: TabbedSettings = {
   tabSize: 4,
   autoSaveDelayMs: 5000,
   maxLiveTabBodies: 5,
-  waitUntilShown: false,
   border: 'hover',
   borderColor: '#e0e0e0',
   hideNativeEditButton: true,
@@ -126,7 +124,6 @@ type CoreSettings = Pick<
   | 'tabSize'
   | 'autoSaveDelayMs'
   | 'maxLiveTabBodies'
-  | 'waitUntilShown'
 >;
 
 type AppearanceSettings = Pick<
@@ -183,12 +180,6 @@ function normalizeCoreSettings(saved: Record<string, unknown>): CoreSettings {
       'maxLiveTabBodies',
       DEFAULT_SETTINGS.maxLiveTabBodies,
       isIntegerInRange(0, 100),
-    ),
-    waitUntilShown: valueOrDefault(
-      saved,
-      'waitUntilShown',
-      DEFAULT_SETTINGS.waitUntilShown,
-      isBoolean,
     ),
   };
 }

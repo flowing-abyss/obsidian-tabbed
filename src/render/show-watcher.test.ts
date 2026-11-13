@@ -49,17 +49,24 @@ function inEditor(container: HTMLElement): HTMLElement {
   return container.createDiv({ cls: 'markdown-source-view' }).createDiv();
 }
 
-describe('layoutShowWatcher.isHiddenEditorCopy', () => {
-  it('flags an attached editor element without a layout box', () => {
-    expect(layoutShowWatcher.isHiddenEditorCopy(inEditor(attached()))).toBe(true);
+describe('layoutShowWatcher.shouldWait', () => {
+  it('waits for an attached editor element without a layout box', () => {
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    expect(layoutShowWatcher.shouldWait(inEditor(attached()))).toBe(true);
   });
 
   it('leaves shown, detached and non-editor elements alone', () => {
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver);
     const shown = inEditor(attached());
     giveLayoutBox(shown);
-    expect(layoutShowWatcher.isHiddenEditorCopy(shown)).toBe(false);
-    expect(layoutShowWatcher.isHiddenEditorCopy(inEditor(createDiv()))).toBe(false);
-    expect(layoutShowWatcher.isHiddenEditorCopy(attached())).toBe(false);
+    expect(layoutShowWatcher.shouldWait(shown)).toBe(false);
+    expect(layoutShowWatcher.shouldWait(inEditor(createDiv()))).toBe(false);
+    expect(layoutShowWatcher.shouldWait(attached())).toBe(false);
+  });
+
+  it('never waits where resize observation is unavailable', () => {
+    vi.stubGlobal('ResizeObserver', undefined);
+    expect(layoutShowWatcher.shouldWait(inEditor(attached()))).toBe(false);
   });
 });
 

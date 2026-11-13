@@ -249,12 +249,10 @@ export class TabsBlock extends MarkdownRenderChild {
     const syntaxChanged = this.syntaxSettingsChanged(settings);
     this.settings = { ...settings };
     this.updateHostMarker();
-    const resumeHidden = !settings.waitUntilShown && this.stopWaitingUntilShown();
 
     if (!syntaxChanged) {
       this.applyShell();
       this.enforceBodyLimit();
-      if (resumeHidden) this.startActivation(this.selection);
       return;
     }
 
@@ -770,9 +768,10 @@ export class TabsBlock extends MarkdownRenderChild {
   }
 
   // The hidden editor copy of a note in Reading view would render Bases, embeds and queries
-  // nobody sees. Bodies already rendered stay switchable.
+  // nobody sees. Bodies already rendered stay switchable. Whenever waiting is not safe, the
+  // block renders as before.
   private deferUntilShown(index: number): boolean {
-    if (!this.settings.waitUntilShown || this.bodyCache.has(index)) {
+    if (this.bodyCache.has(index)) {
       return false;
     }
     if (!this.attachChecked && !this.rootEl.isConnected) {
@@ -783,7 +782,7 @@ export class TabsBlock extends MarkdownRenderChild {
       });
       return true;
     }
-    if (!this.showWatcher.isHiddenEditorCopy(this.rootEl)) {
+    if (!this.showWatcher.shouldWait(this.rootEl)) {
       return false;
     }
     this.updateTabState(null);
@@ -797,11 +796,10 @@ export class TabsBlock extends MarkdownRenderChild {
     return true;
   }
 
-  private stopWaitingUntilShown(): boolean {
+  private stopWaitingUntilShown(): void {
     const cancel = this.cancelShowWait;
-    if (cancel === null) return false;
+    if (cancel === null) return;
     this.cancelShowWait = null;
     cancel();
-    return true;
   }
 }

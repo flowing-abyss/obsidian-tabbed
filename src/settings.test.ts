@@ -15,7 +15,6 @@ describe('normalizeSettings', () => {
       tabSize: 4,
       autoSaveDelayMs: 5000,
       maxLiveTabBodies: 5,
-      waitUntilShown: false,
       border: 'hover',
       borderColor: '#e0e0e0',
       hideNativeEditButton: true,
@@ -41,7 +40,6 @@ describe('normalizeSettings', () => {
         tabSize: 8,
         autoSaveDelayMs: 0,
         maxLiveTabBodies: 0,
-        waitUntilShown: true,
         border: 'always',
         borderColor: '#A1b2C3',
         hideNativeEditButton: false,
@@ -63,7 +61,6 @@ describe('normalizeSettings', () => {
       tabSize: 8,
       autoSaveDelayMs: 0,
       maxLiveTabBodies: 0,
-      waitUntilShown: true,
       border: 'always',
       borderColor: '#A1b2C3',
       hideNativeEditButton: false,
@@ -160,12 +157,4 @@ describe('normalizeSettings', () => {
       expect(normalizeSettings({ maxLiveTabBodies: value }).maxLiveTabBodies).toBe(5);
     },
   );
-
-  it('loads old-format settings without waiting for hidden blocks', () => {
-    expect(normalizeSettings({ maxLiveTabBodies: 3 }).waitUntilShown).toBe(false);
-  });
-
-  it.each(['true', 1, null])('falls back to not waiting until shown for %s', (value) => {
-    expect(normalizeSettings({ waitUntilShown: value }).waitUntilShown).toBe(false);
-  });
 });
