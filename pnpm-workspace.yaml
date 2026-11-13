@@ -12,6 +12,9 @@ overrides:
   # and Appium use the compatible sync/async APIs retained by Glob 14.
   # https://github.com/advisories/GHSA-3g3m-2fjr-6pw4
   'glob@13': 14.0.5
+  # Fix globparts amplification without changing legacy Minimatch 3/9 consumers.
+  # https://github.com/advisories/GHSA-g3hv-75wg-m249
+  'minimatch@10': 11.0.8
 
 allowBuilds:
   # webdriverio's Firefox/Edge driver managers — Obsidian is Electron/Chromium-only,
