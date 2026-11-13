@@ -4,7 +4,7 @@ import { obsidianPage } from 'wdio-obsidian-service';
 
 const preview = '.workspace-leaf.mod-active .markdown-preview-view';
 const roots = `${preview} .tabbed-columns`;
-let preparedNote: { path: string; original: string } | undefined;
+let preparedNote: { path: string; original: string; source: string } | undefined;
 
 interface ColumnsTestWindow extends Window {
   __columnsErrors?: string[];
@@ -44,11 +44,11 @@ async function openNote(note: string): Promise<void> {
   });
   if (note === 'Columns E2E.md') {
     const original = await obsidianPage.read(note);
-    preparedNote = { path: note, original };
     const source = original.replace(
       /column:(\r?\n)Equal second\./,
       'column:\u0020\u0020\u0020$1Equal second.',
     );
+    preparedNote = { path: note, original, source };
     await obsidianPage.write(note, source);
     expect(await obsidianPage.read(note)).toMatch(/column: {3}\r?\nEqual second\./);
   }
@@ -69,34 +69,52 @@ async function waitForColumnRoots(expected: number): Promise<void> {
   } catch (cause) {
     const state = await browser
       .executeObsidian(
-        ({ app, obsidian }, rootSelector, previewSelector) => {
+        async ({ app, obsidian }, rootSelector, previewSelector, expectedSource) => {
+          const view = app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+          const file = app.workspace.getActiveFile();
+          if (view === null || file === null) return { missingActiveView: true };
+          const expected = expectedSource ?? '';
+          const describeSource = (value: string) => ({
+            length: value.length,
+            matchesExpected: value === expected,
+          });
+          const viewData = view.getViewData();
+          const [vaultData, cachedData, diskData] = await Promise.all([
+            app.vault.read(file),
+            app.vault.cachedRead(file),
+            app.vault.adapter.read(file.path),
+          ]);
           const element = document.querySelector<HTMLElement>(previewSelector);
-          const bounds = element?.getBoundingClientRect();
           return {
             actualRoots: document.querySelectorAll(rootSelector).length,
             viewport: { width: window.innerWidth, height: window.innerHeight },
             visibility: document.visibilityState,
             focused: document.hasFocus(),
-            activeFile: app.workspace.getActiveFile()?.path,
-            mode: app.workspace.getActiveViewOfType(obsidian.MarkdownView)?.getMode(),
-            preview:
-              element === null
-                ? null
-                : {
-                    width: bounds?.width,
-                    height: bounds?.height,
-                    scrollTop: element.scrollTop,
-                    scrollHeight: element.scrollHeight,
-                    clientHeight: element.clientHeight,
-                    sections: element.querySelectorAll('.markdown-preview-section').length,
-                    columnsContainers: element.querySelectorAll('.block-language-columns').length,
-                    pendingCodeBlocks: element.querySelectorAll('pre > code.language-columns')
-                      .length,
-                  },
+            activeFile: file.path,
+            mode: view.getMode(),
+            source: {
+              expectedLength: expected.length,
+              view: describeSource(viewData),
+              vault: describeSource(vaultData),
+              cached: describeSource(cachedData),
+              disk: describeSource(diskData),
+              viewPrefix: viewData.slice(0, 250),
+              viewSuffix: viewData.slice(-100),
+            },
+            metadataSections: app.metadataCache.getFileCache(file)?.sections,
+            plugin: {
+              loaded: app.plugins.plugins['tabbed'] !== undefined,
+              commandIds: Object.keys(app.commands.commands).filter((id) =>
+                id.startsWith('tabbed:'),
+              ),
+            },
+            previewText: (element?.textContent ?? '').slice(0, 300),
+            previewHtml: (element?.innerHTML ?? '').slice(0, 700),
           };
         },
         roots,
         preview,
+        preparedNote?.source ?? null,
       )
       .catch((error: unknown) => ({ diagnosticError: String(error) }));
     throw Object.assign(

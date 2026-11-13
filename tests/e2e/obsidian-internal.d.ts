@@ -7,6 +7,7 @@ import type { PluginManifest } from 'obsidian';
 // non-public members. See https://github.com/mnaoumov/obsidian-test-mocks#accessing-unimplemented-properties
 declare module 'obsidian' {
   interface App {
+    commands: { commands: Record<string, unknown> };
     // Documented for plugin authors (Mobile development → "Emulate mobile device on
     // desktop") but not part of the public types either.
     emulateMobile(enabled: boolean): void;
