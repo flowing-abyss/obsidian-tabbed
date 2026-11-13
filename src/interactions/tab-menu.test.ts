@@ -85,7 +85,7 @@ function openMenu(block: TabsBlock, index = 0, getSettings = () => settings()): 
 }
 
 function item(menu: Menu, title: string): MenuItem {
-  const found = menu.items__.find((candidate) => candidate.title__ === title);
+  const found = menu.menuItems__.find((candidate) => candidate.title__ === title);
   if (found === undefined) {
     throw new Error(`Expected ${title} menu item`);
   }
@@ -167,7 +167,7 @@ describe('showTabMenu', () => {
       throw new Error('Expected shown menu');
     }
 
-    expect(menu.items__.map((candidate) => candidate.title__)).toStrictEqual([
+    expect(menu.menuItems__.map((candidate) => candidate.title__)).toStrictEqual([
       'Add tab',
       'Delete tab',
       'Copy tab',
@@ -178,9 +178,9 @@ describe('showTabMenu', () => {
   });
 
   it('closes an open menu once on block unload and does not re-close after normal hide', async () => {
-    const close = vi.spyOn(Menu.prototype, 'close');
+    const close = vi.spyOn(Menu.prototype, 'hide');
     const first = await sourceBlock('tab: A\nalpha');
-    openMenu(first.block).close();
+    openMenu(first.block).hide();
     first.block.unload();
     expect(close).toHaveBeenCalledTimes(1);
 
@@ -194,7 +194,7 @@ describe('showTabMenu', () => {
   it('disposes the owner and reports once when showing the menu throws', async () => {
     const notice = vi.spyOn(Notice.prototype, 'constructor__');
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const close = vi.spyOn(Menu.prototype, 'close');
+    const close = vi.spyOn(Menu.prototype, 'hide');
     vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementationOnce(() => {
       throw new Error('show rejected');
     });
@@ -365,7 +365,9 @@ describe('tab menu mutations', () => {
       } else if (revocation === 'preview') {
         source.setMode('preview');
       } else {
-        source.view.editor = Object.create(originalEditor) as typeof originalEditor;
+        vi.spyOn(source.view, 'editor', 'get').mockReturnValue(
+          Object.create(originalEditor) as typeof originalEditor,
+        );
       }
       read.resolve('tab: Late\nbody');
       await pending;
@@ -404,9 +406,9 @@ describe('tab menu mutations', () => {
     const notice = vi.spyOn(Notice.prototype, 'constructor__');
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { block, view } = await sourceBlock('tab: A\nalpha');
-    const transaction = vi.spyOn(view.editor, 'transaction');
     const menu = openMenu(block);
     view.setViewData('changed elsewhere', false);
+    const transaction = vi.spyOn(view.editor, 'transaction');
 
     await click(menu, 'Delete tab');
 

@@ -1183,6 +1183,69 @@ describe('TabsBlock accessible layout', () => {
 });
 
 describe('TabsBlock source-mode controls', () => {
+  it.each([
+    { control: 'add', selector: '.tabbed__action', type: 'click' },
+    { control: 'menu', selector: '.tabbed__tab[data-tab-index="1"]', type: 'contextmenu' },
+    { control: 'edit', selector: '.tabbed__panel', type: 'dblclick' },
+  ])(
+    'handles the $control control when its event target comes from another window',
+    async ({ control, selector, type }) => {
+      const frame = document.createElement('iframe');
+      document.body.append(frame);
+      const foreignDocument = required(frame.contentDocument, 'Expected a second document');
+      const foreignWindow = required(foreignDocument.defaultView, 'Expected a second window');
+      const target = foreignDocument.createElement('span');
+      // The mocks install Obsidian extensions only in the main window. Supply the
+      // documented cross-window check on this real second-window node.
+      target.instanceOf = function <T>(type: new () => T): this is T {
+        return type.name === 'Element' && target instanceof foreignWindow.Element;
+      };
+      const { block, container, blockHost } = await sourceBlock(async () => undefined, {
+        settings: { ...DEFAULT_SETTINGS, doubleClickToEdit: true },
+      });
+      try {
+        const parent = required(container.querySelector(selector), 'Expected a control target');
+        parent.append(target);
+        const event = new MouseEvent(type, { bubbles: true });
+        target.dispatchEvent(event);
+        if (control === 'add') {
+          expect(blockHost.addTab).toHaveBeenCalledExactlyOnceWith(block);
+        } else if (control === 'menu') {
+          expect(blockHost.openTabMenu).toHaveBeenCalledExactlyOnceWith(block, 1, event);
+        } else {
+          expect(blockHost.editTab).toHaveBeenCalledExactlyOnceWith(block, 0);
+        }
+      } finally {
+        block.unload();
+        container.remove();
+        frame.remove();
+      }
+    },
+  );
+
+  it('moves focus out of an outgoing panel in a second document', async () => {
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const foreignDocument = required(frame.contentDocument, 'Expected a second document');
+    const { block, container } = createBlock(async (_app, _markdown, element) => {
+      if (element.matches('.tabbed__panel')) element.createEl('input');
+    });
+    foreignDocument.body.append(container);
+    try {
+      await block.activate(0);
+      const input = required(container.querySelector('input'), 'Expected an input');
+      input.focus();
+      expect(foreignDocument.activeElement).toBe(input);
+
+      await block.activate(1);
+
+      expect(foreignDocument.activeElement).toBe(block.tabElements[1]);
+    } finally {
+      block.unload();
+      frame.remove();
+    }
+  });
+
   it('recovers source controls on a cache hit after the body finished in a detached view', async () => {
     const body = deferred();
     const renderedBodies: HTMLElement[] = [];

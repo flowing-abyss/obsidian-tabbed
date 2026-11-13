@@ -2,30 +2,19 @@ packages:
   - .
 
 minimumReleaseAge: 1440
-minimumReleaseAgeExclude:
-  - obsidian-test-mocks@3.7.0
 blockExoticSubdeps: true
 saveExact: true
-peerDependencyRules:
-  # eslint-plugin-obsidianmd@0.4.1 pins its `obsidian` peer to the exact version that
-  # was current when it was published — it only reads `obsidian`'s stable, long-lived
-  # PluginManifest type shape, not runtime behavior, so a newer `obsidian` (which this
-  # template intentionally tracks via "latest" for current API typings) is fine here.
-  allowedVersions:
-    'eslint-plugin-obsidianmd>obsidian': '*'
-
 overrides:
   # Security patch for a transitive dep of mocha/wdio; drop-in bump everywhere it's
   # pulled in.
   serialize-javascript: '>=7.0.7'
-  # NOT overriding brace-expansion (`pnpm audit` flags GHSA-mh99-v99m-4gvg via several
-  # minimatch@<10 chains — eslint's own resolution, and @wdio/cli's). Every minimatch
-  # below 10.x expects brace-expansion's old default-export shape; forcing the patched
-  # major (which only exports named bindings) breaks eslint and wdio outright — tried
-  # it, confirmed both failures directly. No compatible patched version exists for the
-  # old API shape. Not exploitable here: only matches this repo's own glob patterns,
-  # never attacker-controlled input. Tracked via Renovate; resolves once eslint/wdio
-  # move to minimatch@10+.
+  # Glob 13 has no backport for this traversal-cancellation vulnerability. Mocha
+  # and Appium use the compatible sync/async APIs retained by Glob 14.
+  # https://github.com/advisories/GHSA-3g3m-2fjr-6pw4
+  'glob@13': 14.0.5
+  # Fix globparts amplification without changing legacy Minimatch 3/9 consumers.
+  # https://github.com/advisories/GHSA-g3hv-75wg-m249
+  'minimatch@10': 11.0.8
 
 allowBuilds:
   # webdriverio's Firefox/Edge driver managers — Obsidian is Electron/Chromium-only,

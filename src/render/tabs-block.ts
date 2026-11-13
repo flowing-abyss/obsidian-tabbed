@@ -483,11 +483,12 @@ export class TabsBlock extends MarkdownRenderChild {
       }
     });
     interactions.registerDomEvent(this.rootEl, 'dblclick', (event) => {
+      const target = event.target as Node | null;
       if (
         this.locatorValue !== null &&
         this.settings.doubleClickToEdit &&
-        event.target instanceof Element &&
-        this.bodyCache.get(this.selection)?.panelEl.contains(event.target) === true
+        target?.instanceOf(Element) === true &&
+        this.bodyCache.get(this.selection)?.panelEl.contains(target) === true
       ) {
         this.host.editTab(this, this.selection);
       }
@@ -495,10 +496,11 @@ export class TabsBlock extends MarkdownRenderChild {
   }
 
   private actionFromEvent(event: MouseEvent): 'add' | 'edit' | null {
-    if (this.locatorValue === null || !(event.target instanceof Element)) {
+    const target = event.target as Node | null;
+    if (this.locatorValue === null || target?.instanceOf(Element) !== true) {
       return null;
     }
-    const actionEl = event.target.closest<HTMLElement>('[data-tab-action]');
+    const actionEl = target.closest<HTMLElement>('[data-tab-action]');
     if (actionEl === null || !this.listEl.contains(actionEl)) {
       return null;
     }
@@ -507,10 +509,11 @@ export class TabsBlock extends MarkdownRenderChild {
   }
 
   private tabIndexFromEvent(event: Event): number | null {
-    if (!(event.target instanceof Element)) {
+    const target = event.target as Node | null;
+    if (target?.instanceOf(Element) !== true) {
       return null;
     }
-    const tab = event.target.closest<HTMLElement>('.tabbed__tab');
+    const tab = target.closest<HTMLElement>('.tabbed__tab');
     if (tab === null || !this.listEl.contains(tab)) {
       return null;
     }
@@ -606,7 +609,8 @@ export class TabsBlock extends MarkdownRenderChild {
 
   private setActiveBody(entry: CachedBodyEntry, generation: number): boolean {
     const focusedPanel = [...this.bodyCache.values()].find(
-      (candidate) => candidate !== entry && candidate.panelEl.contains(document.activeElement),
+      (candidate) =>
+        candidate !== entry && candidate.panelEl.contains(this.rootEl.ownerDocument.activeElement),
     );
     if (focusedPanel !== undefined) {
       this.tabs[entry.index]?.focus();

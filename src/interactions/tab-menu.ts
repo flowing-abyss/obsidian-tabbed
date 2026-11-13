@@ -216,7 +216,7 @@ export function showTabMenu({ block, index, event, getSettings }: TabMenuRequest
         return;
       }
       closed = true;
-      menu.close();
+      menu.hide();
     });
     menu.onHide(() => {
       if (closed) {

@@ -4,7 +4,7 @@ import { obsidianPage } from 'wdio-obsidian-service';
 
 const preview = '.workspace-leaf.mod-active .markdown-preview-view';
 const roots = `${preview} .tabbed-columns`;
-let preparedNote: { path: string; original: string } | undefined;
+let preparedNote: { path: string; original: string; source: string } | undefined;
 
 interface ColumnsTestWindow extends Window {
   __columnsErrors?: string[];
@@ -44,11 +44,11 @@ async function openNote(note: string): Promise<void> {
   });
   if (note === 'Columns E2E.md') {
     const original = await obsidianPage.read(note);
-    preparedNote = { path: note, original };
     const source = original.replace(
       /column:(\r?\n)Equal second\./,
       'column:\u0020\u0020\u0020$1Equal second.',
     );
+    preparedNote = { path: note, original, source };
     await obsidianPage.write(note, source);
     expect(await obsidianPage.read(note)).toMatch(/column: {3}\r?\nEqual second\./);
   }
@@ -61,6 +61,67 @@ async function openNote(note: string): Promise<void> {
   expect(await browser.executeObsidian(({ app }) => app.plugins.enabledPlugins.has('tabbed'))).toBe(
     true,
   );
+}
+
+async function waitForColumnRoots(expected: number): Promise<void> {
+  try {
+    await browser.waitUntil(async () => (await browser.$$(roots).length) === expected);
+  } catch (cause) {
+    const state = await browser
+      .executeObsidian(
+        async ({ app, obsidian }, rootSelector, previewSelector, expectedSource) => {
+          const view = app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+          const file = app.workspace.getActiveFile();
+          if (view === null || file === null) return { missingActiveView: true };
+          const expected = expectedSource ?? '';
+          const describeSource = (value: string) => ({
+            length: value.length,
+            matchesExpected: value === expected,
+          });
+          const viewData = view.getViewData();
+          const [vaultData, cachedData, diskData] = await Promise.all([
+            app.vault.read(file),
+            app.vault.cachedRead(file),
+            app.vault.adapter.read(file.path),
+          ]);
+          const element = document.querySelector<HTMLElement>(previewSelector);
+          return {
+            actualRoots: document.querySelectorAll(rootSelector).length,
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            visibility: document.visibilityState,
+            focused: document.hasFocus(),
+            activeFile: file.path,
+            mode: view.getMode(),
+            source: {
+              expectedLength: expected.length,
+              view: describeSource(viewData),
+              vault: describeSource(vaultData),
+              cached: describeSource(cachedData),
+              disk: describeSource(diskData),
+              viewPrefix: viewData.slice(0, 250),
+              viewSuffix: viewData.slice(-100),
+            },
+            metadataSections: app.metadataCache.getFileCache(file)?.sections,
+            plugin: {
+              loaded: app.plugins.plugins['tabbed'] !== undefined,
+              commandIds: Object.keys(app.commands.commands).filter((id) =>
+                id.startsWith('tabbed:'),
+              ),
+            },
+            previewText: (element?.textContent ?? '').slice(0, 300),
+            previewHtml: (element?.innerHTML ?? '').slice(0, 700),
+          };
+        },
+        roots,
+        preview,
+        preparedNote?.source ?? null,
+      )
+      .catch((error: unknown) => ({ diagnosticError: String(error) }));
+    throw Object.assign(
+      new Error(`Expected ${expected} columns roots; render state: ${JSON.stringify(state)}`),
+      { cause },
+    );
+  }
 }
 
 async function rootAt(index: number): Promise<WebdriverIO.Element> {
@@ -269,7 +330,7 @@ describe('Columns in real Obsidian Reading view', () => {
   it('renders four scoped rows, Markdown titles/bodies, equal tracks, and weighted tracks', async () => {
     await openNote('Columns E2E.md');
     expect(await obsidianPage.read('Columns E2E.md')).toMatch(/column: {3}\r?\nEqual second\./);
-    await browser.waitUntil(async () => (await browser.$$(roots).length) === 4);
+    await waitForColumnRoots(4);
     const equal = await rootAt(0);
     expect(await equal.$$('.tabbed-columns__title').length).toBe(0);
     const sizes = (await layout(equal)).widths;
@@ -277,9 +338,11 @@ describe('Columns in real Obsidian Reading view', () => {
     expect(Math.abs(required(sizes[0]) - required(sizes[1]))).toBeLessThan(1);
     const weighted = await rootAt(1);
     await expect(weighted.$('.tabbed-columns__title strong')).toHaveText('Weighted main');
-    await expect(weighted.$('.tabbed-columns__title')).not.toHaveText(
-      expect.stringContaining('**'),
-    );
+    await expect(
+      weighted.$(
+        ':scope > .tabbed-columns__grid > .tabbed-columns__column:first-child > .tabbed-columns__title',
+      ),
+    ).not.toHaveText(expect.stringContaining('**'));
     await expect(weighted.$('.tabbed-columns__content em')).toHaveText('Rendered body');
     if (!browser.isMobile) {
       await setWidth(weighted, 1200);
@@ -360,7 +423,7 @@ describe('Columns in real Obsidian Reading view', () => {
     expect(await layout(inner)).toMatchObject({ tracks: 2, overflow: true, stacked: false });
     expect(await outer.$$('.tabbed').length).toBe(1);
     if (!browser.isMobile) {
-      const tab = outer.$('.tabbed__tab');
+      const tab = outer.$('.tabbed').$(':scope > .tabbed__list > .tabbed__tab[data-tab-index="0"]');
       await browser.execute(
         (element) => {
           element.focus();

@@ -67,18 +67,18 @@ jobs:
           sleep 1
           herbstluftwm &
           sleep 1
-          # Two Obsidian windows run at once (WDIO_MAX_INSTANCES). herbstluftwm's default
-          # vertical layout splits the screen between them, so every window is resized
-          # whenever another one opens or closes, mid-test. "max" gives each window the
-          # whole screen instead, keeping geometry stable for the whole run.
+          # Keep Obsidian full-screen instead of herbstluftwm's default vertical splits.
+          # The Linux job below runs one GUI worker on this shared display.
           herbstclient set default_frame_layout max
           herbstclient set_layout max
 
       - name: Run e2e tests
         run: pnpm run test:e2e
         env:
-          # macOS GitHub runners are lower-memory; keep desktop instances modest everywhere.
-          WDIO_MAX_INSTANCES: 2
+          # Linux windows share one X display and a max-layout stack. A second app
+          # obscures the first while Obsidian lazily renders its Reading view.
+          # Keep that shared display to one GUI worker; other hosts stay at two.
+          WDIO_MAX_INSTANCES: ${{ matrix.os == 'ubuntu-latest' && '1' || '2' }}
           OBSIDIAN_VERSIONS: latest/latest
 
   android:

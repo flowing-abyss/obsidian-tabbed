@@ -55,7 +55,10 @@ export default defineConfig(
     },
   },
   ...obsidianmd.configs.recommended,
-  sonarjs.configs.recommended,
+  {
+    ...sonarjs.configs.recommended,
+    files: ['**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx}'],
+  },
   {
     files: ['**/*.ts'],
     rules: {
