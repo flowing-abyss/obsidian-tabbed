@@ -8,6 +8,10 @@ overrides:
   # Security patch for a transitive dep of mocha/wdio; drop-in bump everywhere it's
   # pulled in.
   serialize-javascript: '>=7.0.7'
+  # Glob 13 has no backport for this traversal-cancellation vulnerability. Mocha
+  # and Appium use the compatible sync/async APIs retained by Glob 14.
+  # https://github.com/advisories/GHSA-3g3m-2fjr-6pw4
+  'glob@13': 14.0.5
 
 allowBuilds:
   # webdriverio's Firefox/Edge driver managers — Obsidian is Electron/Chromium-only,
