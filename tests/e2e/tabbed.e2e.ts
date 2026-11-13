@@ -665,4 +665,54 @@ describe('Tabbed in a real Obsidian vault', () => {
       await setLimit(originalLimit);
     }
   });
+
+  it('leaves the hidden editor copy of a Reading view note unrendered until it is shown', async () => {
+    // Panels at every depth and the active texts in each half of the note view.
+    const copies = (): Promise<
+      Record<'editor' | 'reading', { panels: number; active: string[] }>
+    > =>
+      browser.executeObsidian(({ app, obsidian }) => {
+        const view = app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+        if (view === null) throw new Error('Expected an active Markdown view');
+        const describe = (scope: string) => {
+          const half = view.containerEl.querySelector<HTMLElement>(scope);
+          if (half === null) return { panels: -1, active: [] };
+          return {
+            panels: half.querySelectorAll('.tabbed__panel').length,
+            active: Array.from(half.querySelectorAll<HTMLElement>('.tabbed__panel.is-active')).map(
+              (panel) => panel.querySelector('p')?.textContent.trim() ?? '',
+            ),
+          };
+        };
+        return {
+          editor: describe('.markdown-source-view'),
+          reading: describe('.markdown-preview-view'),
+        };
+      });
+    const outerAndNested = ['Outer overview body.', 'Nested first body.'];
+
+    // Put the leaf in Reading view on another note, so the fixture loads its editor copy hidden.
+    await replaceActiveNote('Tabbed Limit E2E.md');
+    await browser.executeObsidianCommand('markdown:toggle-preview');
+    await replaceActiveNote(FIXTURE);
+    await browser.waitUntil(async () => (await copies()).reading.active.length === 2);
+    // Give the hidden copy several frames in which it could have rendered.
+    await browser.execute(async () => {
+      for (let frame = 0; frame < 5; frame += 1) {
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      }
+    });
+    expect(await copies()).toMatchObject({
+      editor: { panels: 0 },
+      reading: { panels: 2, active: outerAndNested },
+    });
+
+    await browser.executeObsidianCommand('markdown:toggle-preview');
+    await browser.waitUntil(async () => (await copies()).editor.active.length === 2);
+    expect((await copies()).editor).toMatchObject({ panels: 2, active: outerAndNested });
+  });
 });
