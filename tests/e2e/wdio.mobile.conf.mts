@@ -25,6 +25,10 @@ if (env['CI']) {
 export const config: WebdriverIO.Config = {
   runner: 'local',
   framework: 'mocha',
+  // Appium controls a headless Android emulator; these workers need no X display.
+  // Avoid the Ubuntu 26.04 xvfb-run IPC failure in WebdriverIO v9.
+  // https://github.com/webdriverio/webdriverio/issues/15685
+  autoXvfb: false,
 
   // Resolved relative to this config file's own directory (tests/e2e/), not the cwd
   // it's invoked from.
