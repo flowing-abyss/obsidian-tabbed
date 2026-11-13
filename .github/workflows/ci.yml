@@ -16,7 +16,7 @@ jobs:
 
     strategy:
       matrix:
-        # jsdom 30 (used by the test suite) requires Node >=22.22 / >=24.15 / >=26, so 20.x is excluded.
+        # WebdriverIO 10 requires Node >=22.23.4 / >=24.22.1 / >=26.12.1; CI tracks current LTS patches.
         # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
         node-version: [22.x, 24.x]
 

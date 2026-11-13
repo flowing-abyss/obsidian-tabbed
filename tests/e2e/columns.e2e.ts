@@ -277,9 +277,11 @@ describe('Columns in real Obsidian Reading view', () => {
     expect(Math.abs(required(sizes[0]) - required(sizes[1]))).toBeLessThan(1);
     const weighted = await rootAt(1);
     await expect(weighted.$('.tabbed-columns__title strong')).toHaveText('Weighted main');
-    await expect(weighted.$('.tabbed-columns__title')).not.toHaveText(
-      expect.stringContaining('**'),
-    );
+    await expect(
+      weighted.$(
+        ':scope > .tabbed-columns__grid > .tabbed-columns__column:first-child > .tabbed-columns__title',
+      ),
+    ).not.toHaveText(expect.stringContaining('**'));
     await expect(weighted.$('.tabbed-columns__content em')).toHaveText('Rendered body');
     if (!browser.isMobile) {
       await setWidth(weighted, 1200);
@@ -360,7 +362,7 @@ describe('Columns in real Obsidian Reading view', () => {
     expect(await layout(inner)).toMatchObject({ tracks: 2, overflow: true, stacked: false });
     expect(await outer.$$('.tabbed').length).toBe(1);
     if (!browser.isMobile) {
-      const tab = outer.$('.tabbed__tab');
+      const tab = outer.$('.tabbed').$(':scope > .tabbed__list > .tabbed__tab[data-tab-index="0"]');
       await browser.execute(
         (element) => {
           element.focus();

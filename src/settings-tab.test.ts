@@ -377,8 +377,8 @@ describe('styles', () => {
       ),
     ).toBe(false);
     expect(focusSelectors).toStrictEqual([
-      ".tabbed > [class~='tabbed__list'] > [class~='tabbed__tab']:focus-visible",
-      ".tabbed > [class~='tabbed__list'] > [class~='tabbed__action']:focus-visible",
+      '.tabbed > [class~="tabbed__list"] > [class~="tabbed__tab"]:focus-visible',
+      '.tabbed > [class~="tabbed__list"] > [class~="tabbed__action"]:focus-visible',
     ]);
   });
 
