@@ -63,6 +63,49 @@ async function openNote(note: string): Promise<void> {
   );
 }
 
+async function waitForColumnRoots(expected: number): Promise<void> {
+  try {
+    await browser.waitUntil(async () => (await browser.$$(roots).length) === expected);
+  } catch (cause) {
+    const state = await browser
+      .executeObsidian(
+        ({ app, obsidian }, rootSelector, previewSelector) => {
+          const element = document.querySelector<HTMLElement>(previewSelector);
+          const bounds = element?.getBoundingClientRect();
+          return {
+            actualRoots: document.querySelectorAll(rootSelector).length,
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            visibility: document.visibilityState,
+            focused: document.hasFocus(),
+            activeFile: app.workspace.getActiveFile()?.path,
+            mode: app.workspace.getActiveViewOfType(obsidian.MarkdownView)?.getMode(),
+            preview:
+              element === null
+                ? null
+                : {
+                    width: bounds?.width,
+                    height: bounds?.height,
+                    scrollTop: element.scrollTop,
+                    scrollHeight: element.scrollHeight,
+                    clientHeight: element.clientHeight,
+                    sections: element.querySelectorAll('.markdown-preview-section').length,
+                    columnsContainers: element.querySelectorAll('.block-language-columns').length,
+                    pendingCodeBlocks: element.querySelectorAll('pre > code.language-columns')
+                      .length,
+                  },
+          };
+        },
+        roots,
+        preview,
+      )
+      .catch((error: unknown) => ({ diagnosticError: String(error) }));
+    throw Object.assign(
+      new Error(`Expected ${expected} columns roots; render state: ${JSON.stringify(state)}`),
+      { cause },
+    );
+  }
+}
+
 async function rootAt(index: number): Promise<WebdriverIO.Element> {
   const elements = await browser.$$(roots).getElements();
   const element = elements[index];
@@ -269,7 +312,7 @@ describe('Columns in real Obsidian Reading view', () => {
   it('renders four scoped rows, Markdown titles/bodies, equal tracks, and weighted tracks', async () => {
     await openNote('Columns E2E.md');
     expect(await obsidianPage.read('Columns E2E.md')).toMatch(/column: {3}\r?\nEqual second\./);
-    await browser.waitUntil(async () => (await browser.$$(roots).length) === 4);
+    await waitForColumnRoots(4);
     const equal = await rootAt(0);
     expect(await equal.$$('.tabbed-columns__title').length).toBe(0);
     const sizes = (await layout(equal)).widths;
